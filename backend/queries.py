@@ -751,6 +751,34 @@ def add_turn(cur, case_id: str, call_session_id: str | None, role: str,
     )
 
 
+def save_transcript(cur, case_id: str, call_session_id: str,
+                    turns: list[dict[str, Any]], language_code: str | None) -> int:
+    """
+    Store the transcript Sarvam hands the on_end hook, one row per turn.
+
+    Replaces any turns already stored for this call, so a retried hook does
+    not double the conversation. Returns the number of turns stored.
+    """
+    cur.execute("delete from conversation_turns where call_session_id = %s",
+                (call_session_id,))
+    for t in turns:
+        add_turn(cur, case_id, call_session_id, t["role"], t["text_original"],
+                 t["text_english"], language_code)
+    cur.execute("update call_sessions set turn_count = %s where id = %s",
+                (len(turns), call_session_id))
+    return len(turns)
+
+
+def set_issue_summary_if_empty(cur, case_id: str, summary: str) -> None:
+    cur.execute(
+        """
+        update cases set issue_summary = %s, updated_at = now()
+         where id = %s and (issue_summary is null or issue_summary = '')
+        """,
+        (summary, case_id),
+    )
+
+
 def bind_phone(cur, phone: str, merchant_id: str, note: str | None) -> None:
     cur.execute(
         """

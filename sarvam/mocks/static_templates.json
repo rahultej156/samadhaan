@@ -1,0 +1,48 @@
+{
+ "get_merchant_context": {
+  "tool_id": "0657f110-6d6a-44d2-987d-8ad9aeaf3c89",
+  "real_url": "https://samadhan.ngrok.app/tools/merchant-context",
+  "static": "ok=True; found=True; reason=; case_ref=SMD-1042; merchant_id=8f1c...; merchant=Lakshmi Provision Store; owner=Lakshmi Devi; city=Hyderabad; language_code=te-IN; shop_status=closed; shop_closed_on=2026-03-12; device=Soundbox SB-77301; device_status=active; device_last_seen_days=243; billed_plan=Soundbox Rental Standard; billed_monthly=₹125.00; promised_plan=Soundbox Promo ₹1; promised_monthly_amount=1.0; plan_mismatch=True; months_charged_after_closure=8; charged_after_closure=₹1,000.00; settlement_on_hold=False; settlement_amount_on_hold=0; returning_caller=False; call_sequence_no=1; previous_calls=0; last_call_ago=; last_call_end_reason=; case_state=open; issue_summary=; actions_already_taken=; proof_sent=; pending_approval=False; pending_refund_ref=; pending_refund_amount=; remaining_steps="
+ },
+ "get_billing_summary": {
+  "tool_id": "5160d453-1540-479a-af69-8568b4e41b87",
+  "real_url": "https://samadhan.ngrok.app/tools/billing",
+  "static": "ok=True; billed_plan=Soundbox Rental Standard; monthly=₹125.00; months_charged=16; total_charged=₹2,000.00; first_charge_on=2025-07-01; last_charge_on=2026-11-01; dues_outstanding=0; reason="
+ },
+ "check_promised_plan": {
+  "tool_id": "6b1b186d-62f0-464d-8485-b382b3a8ec2f",
+  "real_url": "https://samadhan.ngrok.app/tools/promise-check",
+  "static": "ok=True; mismatch=True; promised_plan=Soundbox Promo ₹1; promised_monthly=₹1.00; promised_by=field sales, Hyderabad South; promised_on=2026-04-02; billed_plan=Soundbox Rental Standard; billed_monthly=₹125.00; months_affected=7; overcharge_amount=868.0; overcharge=₹868.00; reason="
+ },
+ "stop_billing_and_pickup": {
+  "tool_id": "d27b1d1b-0044-4c95-9c77-68657be23f39",
+  "real_url": "https://samadhan.ngrok.app/tools/closure",
+  "static": "ok=True; ref=SMD-1042; billing_stopped_from=2026-11-14; device_status=pickup_scheduled; credit_note_ref=CN-5521; credit_note_amount=₹1,000.00; credit_note_period=12 March 2026 to 14 November 2026; pickup_ref=PU-8841; pickup_date=2026-11-19; pickup_address=Shop 14, Moosapet Main Road, Hyderabad 500018; reason="
+ },
+ "get_settlement_hold": {
+  "tool_id": "cffc7d8d-3113-456b-bc18-d11934091931",
+  "real_url": "https://samadhan.ngrok.app/tools/settlement-hold",
+  "static": "ok=True; on_hold=True; amount_on_hold=₹14,200.00; held_since=2026-10-29; reason_plain=The name on your PAN does not match the name on your GST registration, so the account could not be verified.; missing_documents=a photo of your PAN card and your GST certificate; expected_release_date=2026-11-21; reason="
+ },
+ "device_troubleshoot": {
+  "tool_id": "a05c1944-6603-478d-818e-659d0d3698c7",
+  "real_url": "https://samadhan.ngrok.app/tools/device",
+  "static": "ok=True; resolved=False; next_step=1; technician_booked=False; ticket_ref=; technician_date=; device_status=; instruction=Let us try one thing. Press and hold the power button for ten seconds until you hear a beep, then tell me what you hear.; reason="
+ },
+ "raise_refund_request": {
+  "tool_id": "001c94ac-655c-48c3-ac72-ad9349db53b5",
+  "real_url": "https://samadhan.ngrok.app/tools/refund-request",
+  "static": "ok=True; request_ref=RF-2207; amount=₹868.00; status=awaiting_approval; expected_decision_by=2026-11-15; reason="
+ },
+ "handover_to_human": {
+  "tool_id": "61156fc1-26d4-40c6-8ddb-0166e56aaa20",
+  "real_url": "https://samadhan.ngrok.app/tools/handover",
+  "static": "ok=True; summary_ref=HO-1180; case_ref=SMD-1042; reason="
+ },
+ "send_confirmation": {
+  "tool_id": "d4cc7b57-cf51-48bb-8bcb-13467fd7730a",
+  "real_url": "https://samadhan.ngrok.app/tools/confirmation",
+  "static": "ok=True; proof_ref=PR-9043; channel=whatsapp; sent_to=+919000000001; reason="
+ },
+ "_note": "Tools currently point at https://postman-echo.com/post (mock). Static resp_template = canned M1 facts. real_url = backend path to restore later, with the dynamic resp_template from tools.json."
+}

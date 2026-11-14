@@ -1,0 +1,666 @@
+{
+  "_note": "Tool definitions as sent to Sarvam configure_app_tool for agent Samadhan-Me-589b92a5-633b. Recreate each with configure_app_tool(agent_id, tool_type, name, description, connector_config), then agents(operation='set_tools', params={'enable': [run tool names]}). Base URL and X-Samadhan-Key are placeholders.",
+  "agent_id": "Samadhan-Me-589b92a5-633b",
+  "tools": [
+    {
+      "name": "call_started",
+      "tool_type": "webhook_on_start",
+      "description": "Lifecycle hook (on_start). Opens or resumes the merchant's case and records the call session before the agent speaks. Not called by the LLM.",
+      "connector_config": {
+        "url": "https://samadhan.ngrok.app/tools/call-started",
+        "method": "POST",
+        "lifecycle": "on_start",
+        "timeout_seconds": 8,
+        "headers": [
+          {
+            "name": "X-Samadhan-Key",
+            "type": "static",
+            "value": "dev-placeholder"
+          }
+        ],
+        "body": [
+          {
+            "name": "phone",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "user_identifier"
+            }
+          },
+          {
+            "name": "interaction_id",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "interaction_id"
+            }
+          },
+          {
+            "name": "language_code",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "initial_language_name"
+            }
+          },
+          {
+            "name": "agent_phone_number",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "agent_phone_number"
+            }
+          }
+        ],
+        "mock": [
+          {
+            "body": "{\"ok\": true, \"case_ref\": \"SMD-1042\", \"call_sequence_no\": 2, \"resumed\": true, \"state\": \"acting\"}"
+          }
+        ],
+        "mock_config": {
+          "simulate": false,
+          "playground": true
+        }
+      }
+    },
+    {
+      "name": "call_ended",
+      "tool_type": "webhook_on_end",
+      "description": "Lifecycle hook (on_end). Closes the call session and, if a write action happened without proof being sent (e.g. the call dropped), sends the written confirmation anyway. Not called by the LLM.",
+      "connector_config": {
+        "url": "https://samadhan.ngrok.app/tools/call-ended",
+        "method": "POST",
+        "lifecycle": "on_end",
+        "timeout_seconds": 8,
+        "headers": [
+          {
+            "name": "X-Samadhan-Key",
+            "type": "static",
+            "value": "dev-placeholder"
+          }
+        ],
+        "body": [
+          {
+            "name": "interaction_id",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "interaction_id"
+            }
+          },
+          {
+            "name": "phone",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "user_identifier"
+            }
+          },
+          {
+            "name": "duration_s",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "call_duration_seconds"
+            }
+          },
+          {
+            "name": "ended_at",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "interaction_end_time"
+            }
+          },
+          {
+            "name": "transcript",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "interaction_transcript"
+            }
+          }
+        ],
+        "mock": [
+          {
+            "body": "{\"ok\": true, \"case_ref\": \"SMD-1042\", \"ended_mid_action\": true, \"proof_sent\": true, \"proof_ref\": \"PR-9043\"}"
+          }
+        ],
+        "mock_config": {
+          "simulate": false,
+          "playground": true
+        }
+      }
+    },
+    {
+      "name": "get_merchant_context",
+      "tool_type": "webhook",
+      "description": "Call this FIRST in every conversation. Looks up the merchant by the caller's phone number (or by a registered mobile number the caller speaks) and returns shop, billing, device, plan, settlement-hold and case status in one call, including case_ref, merchant_id, returning_caller, pending_approval and actions_already_taken_text.",
+      "connector_config": {
+        "url": "https://samadhan.ngrok.app/tools/merchant-context",
+        "method": "POST",
+        "lifecycle": "run",
+        "timeout_seconds": 8,
+        "headers": [
+          {
+            "name": "X-Samadhan-Key",
+            "type": "static",
+            "value": "dev-placeholder"
+          }
+        ],
+        "body": [
+          {
+            "name": "phone",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "user_identifier"
+            }
+          },
+          {
+            "name": "interaction_id",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "interaction_id"
+            }
+          },
+          {
+            "name": "transcript",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "One or two sentences in English summarising what the caller has said so far about their problem, e.g. 'My shop has closed. Please take the Soundbox back.'"
+          },
+          {
+            "name": "registered_phone",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": false,
+            "description": "Optional. Only fill this when the caller speaks a registered mobile number different from the number they are calling from (for example after the account was not found). Digits only, e.g. 9000000001. Leave empty otherwise."
+          }
+        ],
+        "mock": [
+          {
+            "body": "{\"ok\": true, \"found\": true, \"case_ref\": \"SMD-1042\", \"merchant_id\": \"8f1c...\", \"merchant_name\": \"Lakshmi Provision Store\", \"owner_name\": \"Lakshmi Devi\", \"city\": \"Hyderabad\", \"language_code\": \"te-IN\", \"shop_status\": \"closed\", \"shop_closed_on\": \"2026-03-12\", \"device_type\": \"Soundbox\", \"device_serial\": \"SB-77301\", \"device_status\": \"active\", \"device_last_seen_days\": 243, \"billed_plan\": \"Soundbox Rental Standard\", \"billed_monthly_amount\": 125.0, \"billed_monthly_amount_text\": \"₹125.00\", \"promised_plan\": \"Soundbox Promo ₹1\", \"promised_monthly_amount\": 1.0, \"plan_mismatch\": true, \"months_charged_after_closure\": 8, \"amount_charged_after_closure\": 1000.0, \"amount_charged_after_closure_text\": \"₹1,000.00\", \"settlement_on_hold\": false, \"settlement_amount_on_hold\": 0, \"returning_caller\": false, \"call_sequence_no\": 1, \"previous_calls\": 0, \"last_call_ago_text\": null, \"case_state\": \"open\", \"actions_already_taken_text\": null, \"pending_approval\": false, \"say\": \"I can see your shop Lakshmi Provision Store in Hyderabad. Your Soundbox is still active and you have been charged 125 rupees a month, 1000 rupees in total, since your shop closed in March.\"}"
+          }
+        ],
+        "mock_config": {
+          "simulate": false,
+          "playground": true
+        },
+        "resp_template": "ok={{ok}}; found={{found}}; reason={{reason}}; case_ref={{case_ref}}; merchant_id={{merchant_id}}; merchant={{merchant_name}}; owner={{owner_name}}; city={{city}}; language_code={{language_code}}; shop_status={{shop_status}}; shop_closed_on={{shop_closed_on}}; device={{device_type}} {{device_serial}}; device_status={{device_status}}; device_last_seen_days={{device_last_seen_days}}; billed_plan={{billed_plan}}; billed_monthly={{billed_monthly_amount_text}}; promised_plan={{promised_plan}}; promised_monthly_amount={{promised_monthly_amount}}; plan_mismatch={{plan_mismatch}}; months_charged_after_closure={{months_charged_after_closure}}; charged_after_closure={{amount_charged_after_closure_text}}; settlement_on_hold={{settlement_on_hold}}; settlement_amount_on_hold={{settlement_amount_on_hold}}; returning_caller={{returning_caller}}; call_sequence_no={{call_sequence_no}}; previous_calls={{previous_calls}}; last_call_ago={{last_call_ago_text}}; last_call_end_reason={{last_call_end_reason}}; case_state={{case_state}}; issue_summary={{issue_summary}}; actions_already_taken={{actions_already_taken_text}}; proof_sent={{proof_sent}}; pending_approval={{pending_approval}}; pending_refund_ref={{pending_refund_ref}}; pending_refund_amount={{pending_refund_amount_text}}; remaining_steps={{remaining_steps_text}}",
+        "on_failure": "Our system is not responding right now. I will connect you to a colleague."
+      }
+    },
+    {
+      "name": "get_billing_summary",
+      "tool_type": "webhook",
+      "description": "Read-only. Returns the merchant's current billed plan, monthly amount, how many times they were charged, total charged and first/last charge dates. Use when the caller asks about their charges or bill.",
+      "connector_config": {
+        "url": "https://samadhan.ngrok.app/tools/billing",
+        "method": "POST",
+        "lifecycle": "run",
+        "timeout_seconds": 8,
+        "headers": [
+          {
+            "name": "X-Samadhan-Key",
+            "type": "static",
+            "value": "dev-placeholder"
+          }
+        ],
+        "body": [
+          {
+            "name": "merchant_id",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "The merchant_id exactly as returned by get_merchant_context."
+          },
+          {
+            "name": "interaction_id",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "interaction_id"
+            }
+          }
+        ],
+        "mock": [
+          {
+            "body": "{\"ok\": true, \"billed_plan\": \"Soundbox Rental Standard\", \"monthly_amount\": 125.0, \"monthly_amount_text\": \"₹125.00\", \"months_charged\": 16, \"total_charged\": 2000.0, \"total_charged_text\": \"₹2,000.00\", \"first_charge_on\": \"2025-07-01\", \"last_charge_on\": \"2026-11-01\", \"dues_outstanding\": 0, \"say\": \"You are on the Soundbox Rental Standard plan at 125 rupees a month. You have been charged 16 times, 2000 rupees in total, with the last charge on the first of November.\"}"
+          }
+        ],
+        "mock_config": {
+          "simulate": false,
+          "playground": true
+        },
+        "resp_template": "ok={{ok}}; billed_plan={{billed_plan}}; monthly={{monthly_amount_text}}; months_charged={{months_charged}}; total_charged={{total_charged_text}}; first_charge_on={{first_charge_on}}; last_charge_on={{last_charge_on}}; dues_outstanding={{dues_outstanding}}; reason={{reason}}",
+        "on_failure": "Our system is not responding right now. I will connect you to a colleague."
+      }
+    },
+    {
+      "name": "check_promised_plan",
+      "tool_type": "webhook",
+      "description": "Read-only promise check. Compares the plan sales promised the merchant against the plan actually billed and returns whether there is a mismatch and the overcharge amount. When mismatch is true, call raise_refund_request next.",
+      "connector_config": {
+        "url": "https://samadhan.ngrok.app/tools/promise-check",
+        "method": "POST",
+        "lifecycle": "run",
+        "timeout_seconds": 8,
+        "headers": [
+          {
+            "name": "X-Samadhan-Key",
+            "type": "static",
+            "value": "dev-placeholder"
+          }
+        ],
+        "body": [
+          {
+            "name": "merchant_id",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "The merchant_id exactly as returned by get_merchant_context."
+          },
+          {
+            "name": "interaction_id",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "interaction_id"
+            }
+          }
+        ],
+        "mock": [
+          {
+            "body": "{\"ok\": true, \"mismatch\": true, \"promised_plan\": \"Soundbox Promo ₹1\", \"promised_monthly_amount\": 1.0, \"promised_monthly_amount_text\": \"₹1.00\", \"promised_by\": \"field sales, Hyderabad South\", \"promised_on\": \"2026-04-02\", \"billed_plan\": \"Soundbox Rental Standard\", \"billed_monthly_amount\": 125.0, \"billed_monthly_amount_text\": \"₹125.00\", \"months_affected\": 7, \"overcharge_amount\": 868.0, \"overcharge_amount_text\": \"₹868.00\", \"say\": \"You were promised 1 rupee a month when you signed up in April, but you have been billed 125 rupees a month for 7 months. You have been overcharged by 868 rupees. I cannot release money myself, so I will raise a refund request for a colleague to approve.\"}"
+          }
+        ],
+        "mock_config": {
+          "simulate": false,
+          "playground": true
+        },
+        "resp_template": "ok={{ok}}; mismatch={{mismatch}}; promised_plan={{promised_plan}}; promised_monthly={{promised_monthly_amount_text}}; promised_by={{promised_by}}; promised_on={{promised_on}}; billed_plan={{billed_plan}}; billed_monthly={{billed_monthly_amount_text}}; months_affected={{months_affected}}; overcharge_amount={{overcharge_amount}}; overcharge={{overcharge_amount_text}}; reason={{reason}}",
+        "on_failure": "Our system is not responding right now. I will connect you to a colleague."
+      }
+    },
+    {
+      "name": "stop_billing_and_pickup",
+      "tool_type": "webhook",
+      "description": "Write action for a closed shop. Stops billing from the request date, raises a credit note for the period since closure, and books a device pickup. Call only after the merchant confirms they want to close, and only if actions_already_taken_text does not already cover it. Afterwards call send_confirmation.",
+      "connector_config": {
+        "url": "https://samadhan.ngrok.app/tools/closure",
+        "method": "POST",
+        "lifecycle": "run",
+        "timeout_seconds": 8,
+        "headers": [
+          {
+            "name": "X-Samadhan-Key",
+            "type": "static",
+            "value": "dev-placeholder"
+          }
+        ],
+        "body": [
+          {
+            "name": "merchant_id",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "The merchant_id exactly as returned by get_merchant_context."
+          },
+          {
+            "name": "interaction_id",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "interaction_id"
+            }
+          },
+          {
+            "name": "request_date",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "current_date"
+            }
+          },
+          {
+            "name": "reason",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "Short English reason for closure in the merchant's words, e.g. 'shop permanently closed'."
+          },
+          {
+            "name": "idempotency_key",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "Exactly '<case_ref>:closure', using case_ref from get_merchant_context, e.g. 'SMD-1042:closure'. Never use the interaction id."
+          }
+        ],
+        "mock": [
+          {
+            "body": "{\"ok\": true, \"ref\": \"SMD-1042\", \"billing_stopped_from\": \"2026-11-14\", \"device_status\": \"pickup_scheduled\", \"credit_note_ref\": \"CN-5521\", \"credit_note_amount\": 1000.0, \"credit_note_amount_text\": \"₹1,000.00\", \"credit_note_period\": \"12 March 2026 to 14 November 2026\", \"pickup_ref\": \"PU-8841\", \"pickup_date\": \"2026-11-19\", \"pickup_address\": \"Shop 14, Moosapet Main Road, Hyderabad 500018\", \"say\": \"I have stopped the billing from today. A credit note of 1000 rupees has been raised for the period since your shop closed in March. Pickup of the Soundbox is booked for the nineteenth of November, and I will send you a written confirmation with these details.\"}"
+          }
+        ],
+        "mock_config": {
+          "simulate": false,
+          "playground": true
+        },
+        "resp_template": "ok={{ok}}; ref={{ref}}; billing_stopped_from={{billing_stopped_from}}; device_status={{device_status}}; credit_note_ref={{credit_note_ref}}; credit_note_amount={{credit_note_amount_text}}; credit_note_period={{credit_note_period}}; pickup_ref={{pickup_ref}}; pickup_date={{pickup_date}}; pickup_address={{pickup_address}}; reason={{reason}}",
+        "on_failure": "Our system is not responding right now. I will connect you to a colleague."
+      }
+    },
+    {
+      "name": "get_settlement_hold",
+      "tool_type": "webhook",
+      "description": "Read-only. Explains why the merchant's settlement is on hold, the amount held, which documents are missing and the expected release date. Use when settlement_on_hold is true or the caller asks why their money has not arrived.",
+      "connector_config": {
+        "url": "https://samadhan.ngrok.app/tools/settlement-hold",
+        "method": "POST",
+        "lifecycle": "run",
+        "timeout_seconds": 8,
+        "headers": [
+          {
+            "name": "X-Samadhan-Key",
+            "type": "static",
+            "value": "dev-placeholder"
+          }
+        ],
+        "body": [
+          {
+            "name": "merchant_id",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "The merchant_id exactly as returned by get_merchant_context."
+          },
+          {
+            "name": "interaction_id",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "interaction_id"
+            }
+          }
+        ],
+        "mock": [
+          {
+            "body": "{\"ok\": true, \"on_hold\": true, \"amount_on_hold\": 14200.0, \"amount_on_hold_text\": \"₹14,200.00\", \"held_since\": \"2026-10-29\", \"reason_plain\": \"The name on your PAN does not match the name on your GST registration, so the account could not be verified.\", \"missing_documents\": [\"PAN card photo\", \"GST certificate\"], \"missing_documents_text\": \"a photo of your PAN card and your GST certificate\", \"expected_release_date\": \"2026-11-21\", \"say\": \"Your settlement of 14,200 rupees is on hold because the name on your PAN does not match the name on your GST registration. Please upload a photo of your PAN card and your GST certificate. Once both are received, the money is released within three working days, which would be the twenty-first of November.\"}"
+          }
+        ],
+        "mock_config": {
+          "simulate": false,
+          "playground": true
+        },
+        "resp_template": "ok={{ok}}; on_hold={{on_hold}}; amount_on_hold={{amount_on_hold_text}}; held_since={{held_since}}; reason_plain={{reason_plain}}; missing_documents={{missing_documents_text}}; expected_release_date={{expected_release_date}}; reason={{reason}}",
+        "on_failure": "Our system is not responding right now. I will connect you to a colleague."
+      }
+    },
+    {
+      "name": "device_troubleshoot",
+      "tool_type": "webhook",
+      "description": "Guided Soundbox troubleshooting, one step at a time. Start with step 0, then pass back the next_step from the previous response. When steps run out the backend books a technician (technician_booked true).",
+      "connector_config": {
+        "url": "https://samadhan.ngrok.app/tools/device",
+        "method": "POST",
+        "lifecycle": "run",
+        "timeout_seconds": 8,
+        "headers": [
+          {
+            "name": "X-Samadhan-Key",
+            "type": "static",
+            "value": "dev-placeholder"
+          }
+        ],
+        "body": [
+          {
+            "name": "merchant_id",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "The merchant_id exactly as returned by get_merchant_context."
+          },
+          {
+            "name": "interaction_id",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "interaction_id"
+            }
+          },
+          {
+            "name": "symptom",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "One of a list",
+            "required": true,
+            "description": "The device problem the caller describes. Use unknown if it does not clearly match.",
+            "enum": [
+              "no_sound",
+              "not_powering_on",
+              "no_network",
+              "not_announcing_payments",
+              "unknown"
+            ]
+          },
+          {
+            "name": "step",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Number",
+            "required": true,
+            "description": "Troubleshooting step number. 0 on the first call; afterwards the next_step value returned by the previous device_troubleshoot call."
+          },
+          {
+            "name": "idempotency_key",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "Exactly '<case_ref>:device:<step>', using case_ref from get_merchant_context and the step being sent, e.g. 'SMD-1045:device:0'. Never use the interaction id."
+          }
+        ],
+        "mock": [
+          {
+            "body": "{\"ok\": true, \"resolved\": false, \"next_step\": 1, \"technician_booked\": false, \"say\": \"Let us try one thing. Press and hold the power button for ten seconds until you hear a beep, then tell me what you hear.\"}"
+          }
+        ],
+        "mock_config": {
+          "simulate": false,
+          "playground": true
+        },
+        "resp_template": "ok={{ok}}; resolved={{resolved}}; next_step={{next_step}}; technician_booked={{technician_booked}}; ticket_ref={{ticket_ref}}; technician_date={{technician_date}}; device_status={{device_status}}; instruction={{say}}; reason={{reason}}",
+        "on_failure": "Our system is not responding right now. I will connect you to a colleague."
+      }
+    },
+    {
+      "name": "raise_refund_request",
+      "tool_type": "webhook",
+      "description": "Queues a refund request for a human colleague to approve. Never pays money. Call after check_promised_plan returns mismatch true. Do NOT call if pending_approval is already true. Never tell the caller a refund is approved or paid.",
+      "connector_config": {
+        "url": "https://samadhan.ngrok.app/tools/refund-request",
+        "method": "POST",
+        "lifecycle": "run",
+        "timeout_seconds": 8,
+        "headers": [
+          {
+            "name": "X-Samadhan-Key",
+            "type": "static",
+            "value": "dev-placeholder"
+          }
+        ],
+        "body": [
+          {
+            "name": "merchant_id",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "The merchant_id exactly as returned by get_merchant_context."
+          },
+          {
+            "name": "interaction_id",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "interaction_id"
+            }
+          },
+          {
+            "name": "amount",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Number",
+            "required": true,
+            "description": "Refund amount in rupees as a number with 2 decimals, copied exactly from overcharge_amount returned by check_promised_plan, e.g. 868.00. Never calculate it yourself."
+          },
+          {
+            "name": "reason",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "Short English reason, e.g. 'promised Rs 1/month promo, billed Rs 125/month for 7 months'."
+          },
+          {
+            "name": "idempotency_key",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "Exactly '<case_ref>:refund', using case_ref from get_merchant_context, e.g. 'SMD-1043:refund'. Never use the interaction id."
+          }
+        ],
+        "mock": [
+          {
+            "body": "{\"ok\": true, \"request_ref\": \"RF-2207\", \"amount\": 868.0, \"amount_text\": \"₹868.00\", \"status\": \"awaiting_approval\", \"expected_decision_by\": \"2026-11-15\", \"say\": \"I have raised a refund request for 868 rupees, reference RF-2207. A colleague has to approve any money that goes out, so this will be reviewed by tomorrow and you will get a message with the decision.\"}"
+          }
+        ],
+        "mock_config": {
+          "simulate": false,
+          "playground": true
+        },
+        "resp_template": "ok={{ok}}; request_ref={{request_ref}}; amount={{amount_text}}; status={{status}}; expected_decision_by={{expected_decision_by}}; reason={{reason}}",
+        "on_failure": "Our system is not responding right now. I will connect you to a colleague."
+      }
+    },
+    {
+      "name": "handover_to_human",
+      "tool_type": "webhook",
+      "description": "Passes the case to a human colleague with a summary so the caller does not repeat themselves. Use for cash-in-hand requests, legal threats, abuse, or any request no other tool covers. After it returns, transfer the call.",
+      "connector_config": {
+        "url": "https://samadhan.ngrok.app/tools/handover",
+        "method": "POST",
+        "lifecycle": "run",
+        "timeout_seconds": 8,
+        "headers": [
+          {
+            "name": "X-Samadhan-Key",
+            "type": "static",
+            "value": "dev-placeholder"
+          }
+        ],
+        "body": [
+          {
+            "name": "merchant_id",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "The merchant_id exactly as returned by get_merchant_context. Use 'unknown' if the merchant was not found."
+          },
+          {
+            "name": "interaction_id",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "interaction_id"
+            }
+          },
+          {
+            "name": "reason",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "Short English reason for the handover, e.g. 'merchant asking for immediate cash refund'."
+          },
+          {
+            "name": "transcript",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "The conversation so far in English, as complete as you can: what the caller asked, what you checked, what was already done, with any reference numbers."
+          },
+          {
+            "name": "idempotency_key",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "Exactly '<case_ref>:handover', using case_ref from get_merchant_context, e.g. 'SMD-1042:handover'. Never use the interaction id."
+          }
+        ],
+        "mock": [
+          {
+            "body": "{\"ok\": true, \"summary_ref\": \"HO-1180\", \"case_ref\": \"SMD-1042\", \"say\": \"I am connecting you to a colleague now. I have passed on everything we discussed, so you will not have to explain it again.\"}"
+          }
+        ],
+        "mock_config": {
+          "simulate": false,
+          "playground": true
+        },
+        "resp_template": "ok={{ok}}; summary_ref={{summary_ref}}; case_ref={{case_ref}}; reason={{reason}}",
+        "on_failure": "I could not pass on the notes automatically, but I am connecting you to a colleague now. Please tell them your registered mobile number."
+      }
+    },
+    {
+      "name": "send_confirmation",
+      "tool_type": "webhook",
+      "description": "The Prove step. Sends the merchant a written confirmation (WhatsApp) built from everything recorded on the case: dates, amounts and reference numbers. Call after any write action (closure, refund request, technician booking) before ending the call.",
+      "connector_config": {
+        "url": "https://samadhan.ngrok.app/tools/confirmation",
+        "method": "POST",
+        "lifecycle": "run",
+        "timeout_seconds": 8,
+        "headers": [
+          {
+            "name": "X-Samadhan-Key",
+            "type": "static",
+            "value": "dev-placeholder"
+          }
+        ],
+        "body": [
+          {
+            "name": "merchant_id",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "The merchant_id exactly as returned by get_merchant_context."
+          },
+          {
+            "name": "interaction_id",
+            "type": "system_variable",
+            "value": {
+              "variable_name": "interaction_id"
+            }
+          },
+          {
+            "name": "idempotency_key",
+            "type": "llm_prompt",
+            "isInputProperty": true,
+            "param_type": "Text",
+            "required": true,
+            "description": "Exactly '<case_ref>:proof', using case_ref from get_merchant_context, e.g. 'SMD-1042:proof'. Never use the interaction id."
+          }
+        ],
+        "mock": [
+          {
+            "body": "{\"ok\": true, \"proof_ref\": \"PR-9043\", \"channel\": \"whatsapp\", \"sent_to\": \"+919000000001\", \"say\": \"I have sent a written confirmation to your registered mobile number with the dates and the reference numbers.\"}"
+          }
+        ],
+        "mock_config": {
+          "simulate": false,
+          "playground": true
+        },
+        "resp_template": "ok={{ok}}; proof_ref={{proof_ref}}; channel={{channel}}; sent_to={{sent_to}}; reason={{reason}}",
+        "on_failure": "Our system is not responding right now. I will connect you to a colleague."
+      }
+    }
+  ]
+}

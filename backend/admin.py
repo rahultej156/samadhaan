@@ -8,6 +8,7 @@ return ordinary JSON and may return real HTTP error codes.
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -176,10 +177,39 @@ def reset() -> dict[str, Any]:
     if not seed.exists():
         raise HTTPException(500, "db/seed.sql not found")
 
-    sql = seed.read_text(encoding="utf-8")
+    # seed.sql carries its own begin/commit so it can be run by hand in psql.
+    # Inside tx() those would commit the wipe on their own, before the phone
+    # bindings are restored, so a failure in between would lose them. Strip
+    # them and let tx() make the whole reset one transaction.
+    sql = re.sub(r"(?im)^\s*(begin|commit)\s*;\s*$", "",
+                 seed.read_text(encoding="utf-8"))
     with tx() as cur:
+        cur.execute("select count(*) as n from cases")
+        cleared = cur.fetchone()["n"]
+
+        # seed.sql truncates phone_bindings and recreates the merchants with
+        # new ids. A binding is an operator's statement that a real handset is
+        # a demo merchant ("my phone is M1"), not demo data, so it must survive
+        # a reset: remember it by merchant_code and re-point it afterwards.
+        cur.execute(
+            """
+            select b.phone, b.note, m.merchant_code
+              from phone_bindings b join merchants m on m.id = b.merchant_id
+            """
+        )
+        bindings = cur.fetchall()
+
         cur.execute(sql)
+
+        restored = 0
+        for b in bindings:
+            merchant = q.find_merchant(cur, merchant_code=b["merchant_code"])
+            if merchant:
+                q.bind_phone(cur, b["phone"], merchant["id"], b["note"])
+                restored += 1
+
         cur.execute("select merchant_code, shop_name from merchants order by merchant_code")
         merchants = cur.fetchall()
-    log.info("demo data reset")
-    return {"ok": True, "merchants": merchants}
+    log.info("demo data reset: %s cases cleared, %s phone bindings kept", cleared, restored)
+    return {"ok": True, "cases_cleared": cleared, "bindings_kept": restored,
+            "merchants": merchants}

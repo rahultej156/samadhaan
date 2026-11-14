@@ -8,6 +8,7 @@ import {
 
 import { operatorName } from "@/app/actions";
 import { AutoRefresh } from "@/components/auto-refresh";
+import { ClearBoard } from "@/components/clear-board";
 import { CaseList } from "@/components/case-list";
 import { CaseDetailPane } from "@/components/case-detail";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -95,6 +96,7 @@ export default async function OperationsPage({ searchParams }: PageProps<"/">) {
             <UserRoundIcon className="size-3.5" />
             <span className="font-medium text-foreground">{operator}</span>
           </span>
+          <ClearBoard caseCount={cases.length} />
           <ThemeToggle />
         </div>
       </header>

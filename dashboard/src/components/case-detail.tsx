@@ -101,6 +101,25 @@ function SectionTitle({
   );
 }
 
+/** Turns arrive flat; show them under the call they belong to, in call order. */
+function groupTurnsByCall(
+  turns: CaseDetail["turns"],
+  calls: CaseDetail["calls"],
+): { key: string; label: string; turns: CaseDetail["turns"] }[] {
+  const seq = new Map(calls.map((c) => [c.id, c.sequence_no]));
+  const groups = new Map<string, CaseDetail["turns"]>();
+  for (const t of turns) {
+    const key = t.call_session_id ?? "none";
+    groups.set(key, [...(groups.get(key) ?? []), t]);
+  }
+  return [...groups.entries()]
+    .map(([key, list]) => {
+      const n = seq.get(key);
+      return { key, label: n ? `Call ${n}` : "Call", turns: list, order: n ?? 0 };
+    })
+    .sort((a, b) => a.order - b.order);
+}
+
 /* ------------------------------------------------------------------- panes */
 
 export function CaseDetailPane({
@@ -120,6 +139,7 @@ export function CaseDetailPane({
     settlement,
     calls,
     events,
+    turns,
     proofs,
     pendingRefunds,
     decidedRefunds,
@@ -385,6 +405,66 @@ export function CaseDetailPane({
                 ))}
               </TableBody>
             </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 2b ------------------------------------------------------ conversation */}
+      <Card>
+        <CardHeader>
+          <SectionTitle icon={UserRoundIcon} count={turns.length}>
+            Conversation
+          </SectionTitle>
+          <CardDescription>
+            What was said on each call, from the voice platform&apos;s transcript. Saved when
+            the call ends; the merchant&apos;s own words first, English underneath.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {turns.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No transcript yet. It arrives when a call ends.
+            </p>
+          ) : (
+            <div className="space-y-5">
+              {groupTurnsByCall(turns, calls).map((group) => (
+                <section key={group.key} className="space-y-2">
+                  <h4 className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+                    {group.label}
+                  </h4>
+                  <ol className="space-y-2">
+                    {group.turns.map((t) => {
+                      const fromMerchant = t.role === "merchant";
+                      const showEnglish =
+                        t.text_english && t.text_english !== t.text_original;
+                      return (
+                        <li
+                          key={t.id}
+                          className={cn("flex", fromMerchant ? "justify-start" : "justify-end")}
+                        >
+                          <div
+                            className={cn(
+                              "max-w-[85%] rounded-lg px-3 py-2 text-[0.9rem] leading-relaxed",
+                              fromMerchant ? "bg-muted" : "bg-brand/[0.08]",
+                            )}
+                          >
+                            <div className="mb-0.5 text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground">
+                              {fromMerchant ? "Merchant" : "Samadhan"}
+                            </div>
+                            <p>{t.text_original ?? t.text_english}</p>
+                            {showEnglish && (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {t.text_english}
+                              </p>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </section>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>

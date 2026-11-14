@@ -15,6 +15,7 @@ Three rules hold for every handler in this file:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import date, datetime, timezone
@@ -161,6 +162,53 @@ async def call_started(request: Request) -> dict[str, Any]:
 # --------------------------------------------------- 0b. call_ended (on_end)
 
 
+def _whole_seconds(value: Any) -> int | None:
+    """Sarvam may send 42, 42.7, "42.7" or "". None means: let the DB work it out."""
+    try:
+        return int(float(value)) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_transcript(raw: Any) -> list[dict[str, str | None]]:
+    """
+    Normalise Sarvam's interaction_transcript into conversation_turns rows.
+
+    Sarvam documents it as a list of {role, en_text, indic_text}. In practice
+    the on_end hook can also hand over the wrapping object
+    {app_id, app_version, interaction_transcript: [...]}, or either of those
+    as a JSON string. All four shapes are accepted; anything else is ignored,
+    so a surprise shape costs the transcript, never the call_ended repair.
+    """
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return []
+    if isinstance(raw, dict):
+        raw = raw.get("interaction_transcript") or raw.get("transcript") or []
+    if not isinstance(raw, list):
+        return []
+
+    turns: list[dict[str, str | None]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").lower()
+        if role in ("user", "merchant", "customer"):
+            role = "merchant"
+        elif role in ("agent", "assistant", "bot", "samadhan"):
+            role = "samadhan"
+        else:
+            continue
+        english = (item.get("en_text") or "").strip() or None
+        original = (item.get("indic_text") or "").strip() or english
+        if not original and not english:
+            continue
+        turns.append({"role": role, "text_original": original, "text_english": english})
+    return turns
+
+
 @router.post("/call-ended")
 async def call_ended(request: Request) -> dict[str, Any]:
     """
@@ -182,15 +230,28 @@ async def call_ended(request: Request) -> dict[str, Any]:
             if end_reason not in {"completed", "disconnected", "transferred", "unknown"}:
                 end_reason = "unknown"
 
-            duration = body.get("duration_s")
             session = q.close_call_session(cur, interaction_id, end_reason,
-                                           int(duration) if duration else None)
+                                           _whole_seconds(body.get("duration_s")))
             if session is None:
                 return {"ok": False, "reason": "unknown interaction_id"}
 
             case = q.case_by_interaction(cur, interaction_id)
             if case is None:
                 return {"ok": True, "note": "session closed, no case"}
+
+            # What only Sarvam knows: the conversation itself and its own
+            # post-call summary. Stored before the repair step so a failure
+            # further down still leaves the transcript on the dashboard.
+            turns = parse_transcript(body.get("transcript"))
+            turns_saved = q.save_transcript(cur, case["id"], session["id"], turns,
+                                            session.get("language_code")
+                                            or case.get("language_code")) if turns else 0
+            summary = str(body.get("call_summary") or "").strip()
+            if summary:
+                q.set_issue_summary_if_empty(cur, case["id"], summary)
+                q.log_event(cur, case["id"], session["id"], "call_summary",
+                            {"source": "sarvam post-call analysis"}, None,
+                            summary, True, None, None, actor="system")
 
             ctx = engine.Ctx(cur=cur, case=case, session=session, args=body)
             if case.get("merchant_id"):
@@ -206,6 +267,8 @@ async def call_ended(request: Request) -> dict[str, Any]:
                 "end_reason": end_reason,
                 "ended_mid_action": mid_action,
                 "proof_sent": False,
+                "turns_saved": turns_saved,
+                "summary_saved": bool(summary),
             }
 
             if mid_action and ctx.merchant:

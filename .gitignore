@@ -42,3 +42,6 @@ probe/
 
 # cloudflared quick-tunnel log
 tunnel.log
+
+# Claude Code personal settings
+.claude/settings.local.json

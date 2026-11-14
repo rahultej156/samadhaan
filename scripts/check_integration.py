@@ -44,7 +44,7 @@ KNOWN = {
     "check_promised_plan", "stop_billing_and_pickup", "get_settlement_hold",
     "device_troubleshoot", "raise_refund_request", "handover_to_human",
     "send_confirmation", "identity_verified", "verification_failed",
-    "refund_approved", "refund_rejected",
+    "refund_approved", "refund_rejected", "call_summary",
 }
 
 

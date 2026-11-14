@@ -16,7 +16,54 @@ export async function operatorName(): Promise<string> {
 }
 
 /**
- * The only write this dashboard performs. It does not touch the database; it
+ * Clear the board between demo takes. Calls the backend's /admin/reset, which
+ * re-runs db/seed.sql: every case, call, transcript, refund, credit note and
+ * ticket goes, the four demo merchants are restored to their starting state,
+ * and phone bindings are kept.
+ */
+export async function resetDemo(): Promise<DecisionResult> {
+  const base = process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
+  const key = process.env.OPERATOR_API_KEY || process.env.SAMADHAN_API_KEY;
+  if (!key) {
+    return { ok: false, message: "Set OPERATOR_API_KEY in dashboard/.env.local" };
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${base.replace(/\/$/, "")}/admin/reset`, {
+      method: "POST",
+      headers: { "X-Samadhan-Key": key },
+      cache: "no-store",
+    });
+  } catch {
+    return { ok: false, message: `Backend unreachable at ${base}. Is it running?` };
+  }
+
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await response.json()) as Record<string, unknown>;
+  } catch {
+    /* non-JSON error page */
+  }
+
+  if (!response.ok) {
+    const detail = typeof body.detail === "string" ? body.detail : `HTTP ${response.status}`;
+    return { ok: false, message: `Not cleared — ${detail}` };
+  }
+
+  revalidatePath("/");
+  const n = typeof body.cases_cleared === "number" ? body.cases_cleared : 0;
+  const kept = typeof body.bindings_kept === "number" ? body.bindings_kept : 0;
+  return {
+    ok: true,
+    message: `Cleared ${n} case${n === 1 ? "" : "s"}. Demo merchants reset${
+      kept ? `, ${kept} phone link${kept === 1 ? "" : "s"} kept` : ""
+    }.`,
+  };
+}
+
+/**
+ * The refund decision. It does not touch the database; it
  * calls the backend, which owns the audit log and the case state machine.
  *
  * Runs on the server, so no key reaches the browser. The key is the OPERATOR

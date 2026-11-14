@@ -103,6 +103,17 @@ export type CaseEvent = {
   at: string;
 };
 
+/** One spoken turn, as Sarvam's transcript recorded it at the end of the call. */
+export type ConversationTurn = {
+  id: number;
+  call_session_id: string | null;
+  role: "merchant" | "samadhan";
+  text_original: string | null;
+  text_english: string | null;
+  language_code: string | null;
+  at: string;
+};
+
 export type Proof = {
   proof_ref: string;
   channel: string;
@@ -158,6 +169,7 @@ export type CaseDetail = {
   settlement: Settlement | null;
   calls: CallSession[];
   events: CaseEvent[];
+  turns: ConversationTurn[];
   proofs: Proof[];
   pendingRefunds: RefundRequest[];
   decidedRefunds: RefundRequest[];
@@ -204,7 +216,7 @@ export async function getCaseDetail(caseRef: string): Promise<CaseDetail | null>
   });
   const merchantId = caseRow?.merchant_id ?? null;
 
-  const [calls, events, proofs, refunds, creditNotes, tickets, handovers] = await Promise.all([
+  const [calls, events, turns, proofs, refunds, creditNotes, tickets, handovers] = await Promise.all([
     selectRows<CallSession>({
       table: "call_sessions",
       eq: ["case_id", caseId],
@@ -213,6 +225,12 @@ export async function getCaseDetail(caseRef: string): Promise<CaseDetail | null>
     selectRows<CaseEvent>({
       table: "case_events",
       columns: "id,call_session_id,actor,tool_name,args,say,ok,latency_ms,at",
+      eq: ["case_id", caseId],
+      order: { column: "id" },
+    }),
+    selectRows<ConversationTurn>({
+      table: "conversation_turns",
+      columns: "id,call_session_id,role,text_original,text_english,language_code,at",
       eq: ["case_id", caseId],
       order: { column: "id" },
     }),
@@ -265,6 +283,7 @@ export async function getCaseDetail(caseRef: string): Promise<CaseDetail | null>
     settlement,
     calls,
     events,
+    turns,
     proofs,
     pendingRefunds: refunds.filter((r) => r.status === "awaiting_approval"),
     decidedRefunds: refunds.filter((r) => r.status !== "awaiting_approval"),
