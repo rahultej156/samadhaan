@@ -143,6 +143,9 @@ async def bind_phone(request: Request) -> dict[str, Any]:
     except Exception:
         body = {}
 
+    if not config.DEMO_MODE:
+        raise HTTPException(403, "DEMO_MODE is off; phone binding is disabled")
+
     phone = q.normalise_phone(body.get("phone"))
     code = body.get("merchant_code")
     if not phone or not code:
@@ -165,7 +168,10 @@ async def bind_phone(request: Request) -> dict[str, Any]:
 
 @router.post("/admin/reset")
 def reset() -> dict[str, Any]:
-    """Re-seed between demo takes. Runs db/seed.sql, which truncates first."""
+    """Re-seed between demo takes. Runs db/seed.sql, which TRUNCATES first."""
+    if not config.DEMO_MODE:
+        raise HTTPException(403, "DEMO_MODE is off; reset is disabled")
+
     seed = ROOT / "db" / "seed.sql"
     if not seed.exists():
         raise HTTPException(500, "db/seed.sql not found")

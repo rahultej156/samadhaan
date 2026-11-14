@@ -32,6 +32,11 @@ class Ctx:
     session: dict[str, Any] | None = None
     resumed: bool = False
     args: dict[str, Any] = field(default_factory=dict)
+    # True when the CARRIER's caller id matches the registered number (or a
+    # demo binding for it). That is possession of the SIM, which is a real
+    # factor. False when the merchant was found from a number they merely
+    # spoke, which proves nothing.
+    caller_id_match: bool = False
 
     @property
     def case_id(self) -> str | None:
@@ -121,6 +126,22 @@ def resolve(cur, body: dict[str, Any]) -> Ctx:
 
     interaction_id = body.get("interaction_id")
 
+    # Did the CARRIER tell us this number, and does it match the account?
+    # `phone` is caller id; `registered_phone` is something the caller said.
+    caller = q.normalise_phone(body.get("phone"))
+    caller_id_match = False
+    if merchant and caller:
+        if caller == merchant.get("phone"):
+            caller_id_match = True
+        else:
+            # A demo binding is a deliberate statement that this handset is
+            # this merchant's, so it counts as caller id.
+            cur.execute(
+                "select 1 from phone_bindings where phone = %s and merchant_id = %s",
+                (caller, merchant["id"]),
+            )
+            caller_id_match = cur.fetchone() is not None
+
     # A tool call can arrive before call_started (hook not registered, or the
     # browser fallback). Create the session lazily so nothing depends on order.
     if merchant is None and interaction_id:
@@ -141,82 +162,154 @@ def resolve(cur, body: dict[str, Any]) -> Ctx:
         case["merchant_id"] = merchant["id"]
 
     return Ctx(cur=cur, merchant=merchant, case=case, session=session,
-               resumed=resumed, args=body)
+               resumed=resumed, args=body, caller_id_match=caller_id_match)
 
 
 # -------------------------------------------------------------- verification
 
 
 def verify_question(merchant: dict[str, Any]) -> str:
-    return "What is the name of your shop?"
-
-
-def answer_matches(merchant: dict[str, Any], answer: str | None) -> bool:
     """
-    The backend compares, not the model. Rahul proposed `verified: true`; a flag
-    the model sets is the model asserting it checked, which is not a check.
+    The question only ever gets asked when the caller id did NOT match, so it
+    must ask for something the agent has never said.
 
-    Generous matching on purpose: Saaras will transliterate "Lakshmi Provision
-    Store" a dozen ways, and a merchant saying "Lakshmi store" is right.
+    It used to ask for the shop name — which `get_merchant_context` had just
+    read out loud. That check was defeated by the sentence before it. The
+    device serial is printed on the Soundbox itself, so answering it needs
+    physical possession, and we never speak it.
     """
-    if not answer:
+    return ("Please read me the serial number printed on the back of your "
+            "Soundbox. It starts with the letters S B.")
+
+
+def answer_matches(merchant_or_device: dict[str, Any], answer: str | None) -> bool:
+    """
+    The backend compares, not the model. A `verified: true` flag from the model
+    is the model asserting it checked, which is not a check.
+
+    Compares against the device serial. Tolerant of how a serial survives
+    speech recognition: "SB 77301", "sb-77301", "seven seven three zero one"
+    all reduce to the same digits.
+    """
+    serial = (merchant_or_device or {}).get("device_serial") or \
+        (merchant_or_device or {}).get("serial") or ""
+    if not answer or not serial:
         return False
 
-    def tokens(text: str) -> set[str]:
-        stop = {"shop", "store", "stores", "the", "my", "name", "is", "and", "co",
-                "provision", "provisions", "centre", "center", "mobile", "tea"}
-        words = re.findall(r"[a-z]+", text.lower())
-        return {w for w in words if len(w) > 2 and w not in stop}
+    # A merchant reading a serial aloud produces "seven seven three zero one"
+    # as often as "77301", and Saaras transcribes whichever it hears. Both must
+    # work, or the check fails honest callers.
+    WORDS = {
+        "zero": "0", "oh": "0", "o": "0", "nought": "0",
+        "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+        "six": "6", "seven": "7", "eight": "8", "nine": "9",
+        "double": "", "triple": "",
+    }
 
-    shop = tokens(merchant.get("shop_name", "") or "")
-    owner = tokens(merchant.get("owner_name", "") or "")
-    said = tokens(answer)
-    if not said:
+    def digits(text: str) -> str:
+        lowered = str(text).lower()
+        parts: list[str] = []
+        for token in re.findall(r"[a-z]+|\d+", lowered):
+            if token.isdigit():
+                parts.append(token)
+            elif token in WORDS:
+                parts.append(WORDS[token])
+        return "".join(parts)
+
+    want = digits(serial)
+    said = digits(answer)
+    if not want:
         return False
-    # Any distinctive word in common is enough: "Lakshmi" identifies the shop.
-    return bool((shop | owner) & said)
+    # The numeric part must match in full. A single shared token is not enough.
+    return bool(said) and want in said
 
 
 def verification_gate(ctx: Ctx, action: str) -> dict[str, Any] | None:
     """
     Returns a failure payload if this write may not proceed, else None.
-    Switchable via REQUIRE_VERIFICATION so it can be dropped if the live demo
-    is running short on time.
+
+    Two ways to be verified:
+      1. The carrier's caller id matches the registered number. That is
+         possession of the SIM and is accepted on its own, which is how a bank
+         treats an inbound call from a registered mobile.
+      2. Otherwise — the merchant was found from a number they spoke, which
+         proves nothing — they must read the device serial off the Soundbox.
+
+    Switchable via REQUIRE_VERIFICATION if the live demo runs short on time.
     """
     if not config.REQUIRE_VERIFICATION:
         return None
+
+    if ctx.caller_id_match:
+        record_verified(ctx, "caller id matches the registered number")
+        return None
+
     if already_verified(ctx):
         return None
 
     answer = ctx.args.get("verify_answer") or ctx.args.get("verification_answer")
-    if answer_matches(ctx.merchant, answer):
-        record_verified(ctx)
+    device = q.device_for(ctx.cur, ctx.merchant["id"]) if ctx.merchant else None
+    if answer_matches(device or {}, answer):
+        record_verified(ctx, "device serial read back by the caller")
         return None
 
     return {
         "ok": False,
         "reason": "identity not verified",
         "verify_question_text": verify_question(ctx.merchant),
-        "say": "Before I make that change, please confirm the name of your shop.",
+        "say": (
+            "You are not calling from the number registered to this account, so "
+            "before I change anything I need to check who you are. " +
+            verify_question(ctx.merchant)
+        ),
     }
 
 
 def already_verified(ctx: Ctx) -> bool:
+    """
+    Per CALL, not per case.
+
+    Scoping this to the case was a privilege-inheritance bug: a case stays open
+    across callbacks, so someone who merely knows the merchant's number could
+    ring in, have that case resumed, and inherit the verification the real
+    merchant earned on an earlier call. A bank re-checks on every call, and so
+    do we. With caller id matching, re-checking costs the honest caller nothing.
+    """
+    if not ctx.session_id:
+        return False
     ctx.cur.execute(
         """
         select 1 from case_events
-         where case_id = %s and tool_name = 'identity_verified'
+         where case_id = %s
+           and call_session_id = %s
+           and tool_name = 'identity_verified'
          limit 1
         """,
-        (ctx.case_id,),
+        (ctx.case_id, ctx.session_id),
     )
     return ctx.cur.fetchone() is not None
 
 
-def record_verified(ctx: Ctx) -> None:
+def record_verified(ctx: Ctx, how: str) -> None:
+    """Audited, so the dashboard can show WHY a write was allowed."""
+    if already_verified(ctx):
+        return
     q.log_event(ctx.cur, ctx.case_id, ctx.session_id, "identity_verified",
-                {"question": verify_question(ctx.merchant)},
-                {"matched": True}, None, True, None, None, actor="system")
+                {"factor": how}, {"matched": True}, None, True, None, None,
+                actor="system")
+
+
+def is_verified(ctx: Ctx) -> bool:
+    """
+    Whether this caller may be told account details at all.
+
+    Used to decide what goes into a payload, not just what writes are allowed:
+    reading the shop name out to an unverified caller would hand them the
+    answer to any question about the shop name.
+    """
+    if not config.REQUIRE_VERIFICATION:
+        return True
+    return ctx.caller_id_match or already_verified(ctx)
 
 
 # --------------------------------------------- what has already been done

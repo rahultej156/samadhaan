@@ -119,18 +119,14 @@ def scenario_m1() -> None:
     expect("not a returning caller", ctx.get("returning_caller") is False)
     case_ref = ctx.get("case_ref")
 
-    # Verification gate: a write without the shop name must be refused.
-    if config.REQUIRE_VERIFICATION:
-        blocked = step("closure WITHOUT verification (must be refused)",
-                       "/tools/closure",
-                       {"phone": phone, "interaction_id": call_id})
-        expect("unverified write refused", blocked.get("ok") is False)
-        expect("asks for the shop name",
-               bool(blocked.get("verify_question_text")))
+    # Calling FROM the registered number is possession of the SIM, so writes
+    # proceed without an extra question. The spoken-number path is covered in
+    # the edge cases, where the caller must read the device serial.
+    expect("verified by caller id", ctx.get("verified_by") == "caller id",
+           f"got {ctx.get('verified_by')}")
 
-    closure = step("stop_billing_and_pickup (verified)", "/tools/closure",
-                   {"phone": phone, "interaction_id": call_id,
-                    "verify_answer": "Lakshmi Provision Store"})
+    closure = step("stop_billing_and_pickup", "/tools/closure",
+                   {"phone": phone, "interaction_id": call_id})
     expect("billing stopped", bool(closure.get("billing_stopped_from")))
     expect("credit note Rs 1000", closure.get("credit_note_amount") == 1000.0,
            f"got {closure.get('credit_note_amount')}")
@@ -138,8 +134,7 @@ def scenario_m1() -> None:
 
     # Idempotency: the same action again must NOT book a second pickup.
     again = step("closure AGAIN (idempotency)", "/tools/closure",
-                 {"phone": phone, "interaction_id": call_id,
-                  "verify_answer": "Lakshmi Provision Store"})
+                 {"phone": phone, "interaction_id": call_id})
     expect("same pickup ref returned",
            again.get("pickup_ref") == closure.get("pickup_ref"),
            f"{again.get('pickup_ref')} vs {closure.get('pickup_ref')}")
@@ -325,9 +320,39 @@ def scenario_edges() -> None:
     expect("asks for the registered number",
            "registered" in (unknown.get("say") or "").lower())
 
-    spoken = step("merchant says their number instead", "/tools/merchant-context",
+    # A number the caller merely SPOKE proves nothing, so the account must stay
+    # closed to them until they read the device serial off the Soundbox.
+    spoken = step("merchant says a number they are not calling from",
+                  "/tools/merchant-context",
                   {"registered_phone": "9000000001", "interaction_id": "test-spoken-1"})
     expect("10-digit spoken number resolves", spoken.get("found") is True)
+    expect("but is NOT treated as verified", spoken.get("verified") is False)
+    expect("shop name withheld", spoken.get("merchant_name") is None,
+           f"leaked {spoken.get('merchant_name')!r}")
+    expect("device serial withheld", spoken.get("device_serial") is None)
+    expect("no rupee figures leaked",
+           spoken.get("amount_charged_after_closure") is None)
+    expect("asks for something it never said",
+           "serial" in (spoken.get("verify_question_text") or "").lower())
+    expect("say does not contain the shop name",
+           "lakshmi" not in (spoken.get("say") or "").lower())
+
+    refused = step("write from that unverified caller (must be refused)",
+                   "/tools/closure",
+                   {"registered_phone": "9000000001",
+                    "interaction_id": "test-spoken-1"})
+    expect("unverified write refused", refused.get("ok") is False)
+
+    wrong = step("wrong serial (must still be refused)", "/tools/closure",
+                 {"registered_phone": "9000000001", "interaction_id": "test-spoken-1",
+                  "verify_answer": "SB-00000"})
+    expect("wrong serial refused", wrong.get("ok") is False)
+
+    right = step("correct serial unlocks the write", "/tools/closure",
+                 {"registered_phone": "9000000001", "interaction_id": "test-spoken-1",
+                  "verify_answer": "S B seven seven three zero one"})
+    expect("correct serial accepted", right.get("ok") is True,
+           f"say was {right.get('say')!r}")
 
     status, body, _ = call("/tools/merchant-context", {"phone": "+919000000001"})
     print(f"\n  [auth] no interaction_id: HTTP {status}, ok={body.get('ok')}")

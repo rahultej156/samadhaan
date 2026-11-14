@@ -29,7 +29,19 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 
 # Shared secret Sarvam sends as X-Samadhan-Key on every tool call.
+# This key reaches a third-party platform's tool config, so it must NOT also
+# authorise the operator endpoints that approve money.
 SAMADHAN_API_KEY = os.environ.get("SAMADHAN_API_KEY", "").strip()
+
+# Separate credential for /ops/* and /admin/* — approving refunds, resetting
+# demo data, binding phone numbers. The dashboard uses this, server-side.
+# If unset, those paths fall back to SAMADHAN_API_KEY and the app logs a
+# warning at startup. Set it to separate the two.
+OPERATOR_API_KEY = os.environ.get("OPERATOR_API_KEY", "").strip()
+
+# /admin/reset and /admin/bind-phone exist for the live demo. They wipe and
+# reseed data, so they are refused unless this is on.
+DEMO_MODE = _bool("DEMO_MODE", True)
 
 # How recently a case must have been touched to be resumed on a callback.
 CASE_RESUME_WINDOW_DAYS = _int("CASE_RESUME_WINDOW_DAYS", 7)

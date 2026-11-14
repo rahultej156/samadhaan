@@ -10,6 +10,7 @@ console raises UnicodeEncodeError the moment one is logged.
 
 from __future__ import annotations
 
+import hmac
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -44,6 +45,14 @@ async def lifespan(app: FastAPI):
     log.info("verification %s | resume window %d days | pickup SLA %d working days",
              "ON" if config.REQUIRE_VERIFICATION else "OFF",
              config.CASE_RESUME_WINDOW_DAYS, config.PICKUP_SLA_DAYS)
+
+    if not config.OPERATOR_API_KEY:
+        log.warning("OPERATOR_API_KEY is not set, so /ops and /admin accept the "
+                    "same key as the voice agent. Set it in backend/.env to "
+                    "separate approving money from answering calls.")
+    if config.DEMO_MODE:
+        log.warning("DEMO_MODE is on: /admin/reset and /admin/bind-phone are "
+                    "enabled. Turn it off outside a demo.")
     try:
         yield
     finally:
@@ -74,11 +83,17 @@ OPEN_PATHS = {"/health", "/docs", "/openapi.json", "/redoc", "/"}
 @app.middleware("http")
 async def shared_secret(request: Request, call_next):
     """
-    Sarvam sends X-Samadhan-Key on every tool call.
+    Two different credentials, because they protect different things.
 
-    A rejection still returns 200 with a `say`, because this middleware also
-    guards the tool endpoints and a 401 mid-call is dead air. Operator
-    endpoints get an ordinary 401.
+    /tools/*        X-Samadhan-Key. This key lives in a third-party platform's
+                    tool configuration, so it must not also be able to approve
+                    money or wipe the database.
+    /ops/*, /admin/*  OPERATOR_API_KEY. Approving refunds and resetting demo
+                    data are operator actions, not agent actions.
+
+    Comparison is timing-safe, and an unset key fails closed rather than open.
+    A tool-path rejection still returns 200 with a `say`: a 401 mid-call is
+    dead air for the merchant.
     """
     path = request.url.path
     if path in OPEN_PATHS or request.method == "OPTIONS":
@@ -87,9 +102,21 @@ async def shared_secret(request: Request, call_next):
     supplied = request.headers.get("x-samadhan-key") or \
         request.headers.get("authorization", "").removeprefix("Bearer ").strip()
 
-    if config.SAMADHAN_API_KEY and supplied != config.SAMADHAN_API_KEY:
-        log.warning("rejected %s: bad or missing X-Samadhan-Key", path)
-        if path.startswith("/tools/"):
+    is_tool = path.startswith("/tools/")
+    if is_tool:
+        expected = config.SAMADHAN_API_KEY
+    else:
+        # Fall back to the agent key only when no operator key is configured,
+        # so an existing setup keeps working; startup logs a warning.
+        expected = config.OPERATOR_API_KEY or config.SAMADHAN_API_KEY
+
+    # Fail closed: no configured key means nothing is authorised.
+    allowed = bool(expected) and bool(supplied) and \
+        hmac.compare_digest(supplied, expected)
+
+    if not allowed:
+        log.warning("rejected %s: bad or missing key", path)
+        if is_tool:
             return JSONResponse(
                 status_code=200,
                 content={

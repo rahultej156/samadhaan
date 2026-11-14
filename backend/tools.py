@@ -233,6 +233,32 @@ async def call_ended(request: Request) -> dict[str, Any]:
 @_handler("get_merchant_context")
 def merchant_context(ctx: engine.Ctx) -> dict[str, Any]:
     cur = ctx.cur
+
+    # An unverified caller is told NOTHING about the account — not the shop
+    # name, not the city, not a rupee figure, not the device serial.
+    #
+    # This used to read the shop name out and then ask "what is the name of
+    # your shop?" as its security check, which the previous sentence had
+    # already answered. Withholding first is what makes the check mean
+    # anything. A call from the registered number is already verified by SIM
+    # possession, so the demo path is unaffected.
+    if not engine.is_verified(ctx):
+        lang = ctx.merchant.get("language_code")
+        return {
+            "ok": True,
+            "found": True,
+            "verified": False,
+            "case_ref": ctx.case_ref,
+            "merchant_id": str(ctx.merchant["id"]),
+            "tts_supported": lang not in engine.TTS_UNSUPPORTED if lang else True,
+            "verify_question_text": engine.verify_question(ctx.merchant),
+            "say": (
+                "I have found an account for that number, but you are not "
+                "calling from it, so I cannot discuss the account until I know "
+                "who you are. " + engine.verify_question(ctx.merchant)
+            ),
+        }
+
     m = q.merchant_context(cur, ctx.merchant["id"])
     spoken_done, done = engine.summarise_actions(cur, ctx.case_id)
     prior = q.previous_calls(cur, ctx.case_id, ctx.args.get("interaction_id"))
@@ -284,7 +310,8 @@ def merchant_context(ctx: engine.Ctx) -> dict[str, Any]:
         "actions_already_taken_text": spoken_done,
         "proof_sent": "proof_sent" in done,
         "pending_approval": pending is not None,
-        "verify_question_text": engine.verify_question(ctx.merchant),
+        "verified": True,
+        "verified_by": "caller id" if ctx.caller_id_match else "device serial",
     }
 
     if prior:
@@ -477,13 +504,17 @@ def promise_check(ctx: engine.Ctx) -> dict[str, Any]:
 @_handler("stop_billing_and_pickup")
 def closure(ctx: engine.Ctx) -> dict[str, Any]:
     cur = ctx.cur
-    key, hit = idempotent(ctx, "closure")
-    if hit:
-        return hit
 
+    # Verification BEFORE the idempotency check, not after. A replayed response
+    # carries the amounts and dates of the original action, so handing one to
+    # an unverified caller leaks the account just as surely as acting would.
     gate = engine.verification_gate(ctx, "closure")
     if gate:
         return gate
+
+    key, hit = idempotent(ctx, "closure")
+    if hit:
+        return hit
 
     device = q.device_for(cur, ctx.merchant["id"])
     if device is None:
@@ -639,14 +670,14 @@ def device_troubleshoot(ctx: engine.Ctx) -> dict[str, Any]:
             "say": next_instruction,
         }
 
-    # Out of steps: book a technician.
-    key, hit = idempotent(ctx, "technician")
-    if hit:
-        return hit
-
+    # Out of steps: book a technician. Gate before replay, as in closure.
     gate = engine.verification_gate(ctx, "technician")
     if gate:
         return gate
+
+    key, hit = idempotent(ctx, "technician")
+    if hit:
+        return hit
 
     ticket = q.existing_ticket(cur, ctx.case_id, "technician")
     if ticket is None:
@@ -684,6 +715,12 @@ def device_troubleshoot(ctx: engine.Ctx) -> dict[str, Any]:
 def refund_request(ctx: engine.Ctx) -> dict[str, Any]:
     cur = ctx.cur
 
+    # Gate first: reporting an existing refund's amount and reference to an
+    # unverified caller is itself a disclosure.
+    gate = engine.verification_gate(ctx, "refund")
+    if gate:
+        return gate
+
     # Never two pending refunds for one case. The unique index would refuse it
     # anyway; this returns the existing one politely instead of erroring.
     existing = q.pending_refund(cur, ctx.case_id)
@@ -706,10 +743,6 @@ def refund_request(ctx: engine.Ctx) -> dict[str, Any]:
     key, hit = idempotent(ctx, "refund")
     if hit:
         return hit
-
-    gate = engine.verification_gate(ctx, "refund")
-    if gate:
-        return gate
 
     # The backend computes the amount, excluding months already credited, so a
     # closure credit and a promo refund can never pay for the same month.
