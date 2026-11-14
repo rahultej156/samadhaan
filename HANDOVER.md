@@ -240,7 +240,7 @@ to work.
 | `ok: false`, "could not find an account" | the caller's number is not seeded or bound — use `/admin/bind-phone` |
 | Agent asked to read a Soundbox serial | `call_started` is not registered as **on_start**, so caller id is untrusted |
 | "I am having trouble reading your account" | a real backend error — tell Syed, the traceback is in the log |
-| Tool call times out | tool latency is normally 150–700 ms; Supabase's free pooler spikes to ~4 s occasionally. Set the tool's Max wait to 10 s, not 30 |
+| Tool call is slow | see the latency note below. Set the tool's Max wait to **10 s**, not 30 — long enough to absorb a spike, short enough that the agent can recover and say something |
 | Same pickup booked twice | should be impossible — the database refuses it. Tell Syed if you see it |
 
 ## 8. Known constraints, so the pitch stays honest
@@ -249,7 +249,23 @@ to work.
 - **Speech out: 9 languages** via `bulbul:v4-flash` — no Malayalam, no Odia.
   Bulbul v3 reached end of life on Voice Agents on 10 Nov 2026. The deck says
   "replies by voice in 11"; say **"understands 23, speaks 9 today"** on stage.
-- A tool call should answer in under 2 s. Measured median 324 ms.
+- **Latency, measured honestly.** The backend itself is fast; the network is
+  not. Same no-op endpoint, same moment:
+
+  | Path | `/tools/echo` |
+  |---|---|
+  | localhost, no tunnel | **1.5 ms** |
+  | through the Cloudflare tunnel | **880–1140 ms** |
+
+  So about **0.9 s of that is the internet path**, before the backend does
+  anything. Real tool calls measured through the tunnel: `merchant-context`
+  0.22 s to 3.2 s, `billing` 0.37 s. Locally the same suite runs at a 324 ms
+  median.
+
+  Two consequences: set Max wait to 10 s, and expect the occasional pause
+  mid-call. It is not a bug on either side — it is the wifi plus Supabase's
+  free-tier pooler. A phone hotspot is worth trying if the venue network is
+  poor.
 - Identity checking is caller id plus a possession check (the Soundbox serial),
   with a three-attempt limit and an audit trail. It is **not** an OTP. If a judge
   asks, that is the honest answer — production would use one.
