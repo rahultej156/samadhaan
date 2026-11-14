@@ -8,6 +8,7 @@ that are already in the database.
 
 from __future__ import annotations
 
+import hmac
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -217,11 +218,23 @@ def answer_matches(merchant_or_device: dict[str, Any], answer: str | None) -> bo
         return "".join(parts)
 
     want = digits(serial)
-    said = digits(answer)
     if not want:
         return False
-    # The numeric part must match in full. A single shared token is not enough.
-    return bool(said) and want in said
+
+    # EXACT match, never "contains". A substring test would let a caller recite
+    # one long digit string that happens to contain the serial and walk
+    # straight through the check.
+    #
+    # Two acceptable forms, so an honest caller is not punished for how they
+    # read it aloud:
+    #   - the whole answer reduced to digits, which covers "SB-77301" and
+    #     "seven seven three zero one" alike
+    #   - any single run of digits in the answer, which covers "SB 77301,
+    #     shop 14" where the extra number would corrupt the joined form
+    # Each candidate is one guess, so this does not help enumeration; the
+    # attempt limit below is what actually stops guessing.
+    candidates = {digits(answer)} | set(re.findall(r"\d+", str(answer)))
+    return any(c and hmac.compare_digest(c, want) for c in candidates)
 
 
 def verification_gate(ctx: Ctx, action: str) -> dict[str, Any] | None:
@@ -247,22 +260,66 @@ def verification_gate(ctx: Ctx, action: str) -> dict[str, Any] | None:
     if already_verified(ctx):
         return None
 
+    # A serial is five digits, so without a limit it is guessable across
+    # retries. Three tries on this call, then a person takes over.
+    failures = failed_attempts(ctx)
+    if failures >= config.VERIFY_MAX_ATTEMPTS:
+        return {
+            "ok": False,
+            "reason": "verification attempts exhausted",
+            "handover_required": True,
+            "say": (
+                "I am not able to confirm who you are, so I cannot make changes "
+                "to this account. I am connecting you to a colleague who can "
+                "help you safely."
+            ),
+        }
+
     answer = ctx.args.get("verify_answer") or ctx.args.get("verification_answer")
     device = q.device_for(ctx.cur, ctx.merchant["id"]) if ctx.merchant else None
-    if answer_matches(device or {}, answer):
+
+    if answer and answer_matches(device or {}, answer):
         record_verified(ctx, "device serial read back by the caller")
         return None
+
+    if answer:
+        # Record the failure, so attempts are counted and auditable. The answer
+        # itself is NOT stored: it is a credential, and the audit log is read
+        # by the support team.
+        q.log_event(ctx.cur, ctx.case_id, ctx.session_id, "verification_failed",
+                    {"attempt": failures + 1,
+                     "limit": config.VERIFY_MAX_ATTEMPTS},
+                    {"matched": False}, None, False, None, None, actor="system")
+        failures += 1
+
+    tries_left = config.VERIFY_MAX_ATTEMPTS - failures
+    prefix = ("That serial number does not match our records. "
+              if answer else
+              "You are not calling from the number registered to this account, "
+              "so before I change anything I need to check who you are. ")
 
     return {
         "ok": False,
         "reason": "identity not verified",
+        "attempts_remaining": tries_left,
         "verify_question_text": verify_question(ctx.merchant),
-        "say": (
-            "You are not calling from the number registered to this account, so "
-            "before I change anything I need to check who you are. " +
-            verify_question(ctx.merchant)
-        ),
+        "say": prefix + verify_question(ctx.merchant),
     }
+
+
+def failed_attempts(ctx: Ctx) -> int:
+    """Failed verification answers on THIS call."""
+    if not ctx.session_id:
+        return 0
+    ctx.cur.execute(
+        """
+        select count(*) as n from case_events
+         where case_id = %s and call_session_id = %s
+           and tool_name = 'verification_failed'
+        """,
+        (ctx.case_id, ctx.session_id),
+    )
+    return ctx.cur.fetchone()["n"]
 
 
 def already_verified(ctx: Ctx) -> bool:

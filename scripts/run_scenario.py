@@ -58,7 +58,10 @@ def call(path: str, payload: dict | None = None, method: str = "POST") -> tuple[
 def step(label: str, path: str, payload: dict) -> dict:
     status, body, ms = call(path, payload)
     say = body.get("say")
-    flag = "ok " if body.get("ok") else "FAIL"
+    # ok:false is often the CORRECT answer (refused write, unknown caller), so
+    # this marks what the backend returned, not whether the test passed. Only
+    # the EXPECT lines and the final tally say that.
+    flag = "ok=T" if body.get("ok") else "ok=F"
     print(f"\n  [{flag}] {label}   ({ms:.0f} ms, HTTP {status})")
     if say:
         print(f"         SAY: {say}")
@@ -348,11 +351,36 @@ def scenario_edges() -> None:
                   "verify_answer": "SB-00000"})
     expect("wrong serial refused", wrong.get("ok") is False)
 
+    # A substring match would let one long digit string contain the serial and
+    # walk straight through. 77301 is in here; it must still be refused.
+    recite = step("reciting a long digit string (must be refused)",
+                  "/tools/closure",
+                  {"registered_phone": "9000000001",
+                   "interaction_id": "test-spoken-1",
+                   "verify_answer": "0123456789 7730177301 9876543210"})
+    expect("a string merely CONTAINING the serial is refused",
+           recite.get("ok") is False,
+           f"say was {recite.get('say')!r}")
+
     right = step("correct serial unlocks the write", "/tools/closure",
                  {"registered_phone": "9000000001", "interaction_id": "test-spoken-1",
                   "verify_answer": "S B seven seven three zero one"})
     expect("correct serial accepted", right.get("ok") is True,
            f"say was {right.get('say')!r}")
+
+    # Guessing must run out. Fresh call, so the attempt counter starts at zero.
+    print("\n  --- guessing the serial on a fresh call ---")
+    last = {}
+    for attempt, guess in enumerate(["SB-11111", "SB-22222", "SB-33333",
+                                     "SB-44444"], start=1):
+        last = step(f"guess {attempt}", "/tools/closure",
+                    {"registered_phone": "9000000001",
+                     "interaction_id": "test-guessing-1",
+                     "verify_answer": guess})
+        expect(f"guess {attempt} refused", last.get("ok") is False)
+    expect("locked out after the limit, hands over to a person",
+           last.get("handover_required") is True,
+           f"say was {last.get('say')!r}")
 
     status, body, _ = call("/tools/merchant-context", {"phone": "+919000000001"})
     print(f"\n  [auth] no interaction_id: HTTP {status}, ok={body.get('ok')}")

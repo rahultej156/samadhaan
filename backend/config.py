@@ -57,6 +57,10 @@ DEBUG = _bool("SAMADHAN_DEBUG", True)
 # Set to 0 if the live demo is running short on time.
 REQUIRE_VERIFICATION = _bool("REQUIRE_VERIFICATION", True)
 
+# Wrong serials allowed on one call before a human takes over. A serial is
+# only five digits, so without a limit it is guessable across retries.
+VERIFY_MAX_ATTEMPTS = _int("VERIFY_MAX_ATTEMPTS", 3)
+
 # Used to build the document-upload link in the settlement-hold proof.
 # Our own page on purpose, never a fabricated paytm.com URL.
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:3000").strip()
