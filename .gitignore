@@ -39,3 +39,6 @@ out/
 # Throwaway: deploy probe used to measure FastAPI Cloud viability.
 # Not part of the build; kept local.
 probe/
+
+# cloudflared quick-tunnel log
+tunnel.log
