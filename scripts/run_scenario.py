@@ -28,8 +28,20 @@ sys.path.insert(0, str(ROOT / "backend"))
 import config  # noqa: E402
 
 BASE = "http://127.0.0.1:8000"
+UA_HEADERS = {"Content-Type": "application/json"}
 FAILURES: list[str] = []
 LATENCIES: list[tuple[str, float]] = []
+
+
+def key_for(path: str) -> str:
+    """
+    Tool paths use the voice-agent key; operator paths use the operator key.
+    They are deliberately different credentials — the agent key lives in a
+    third-party platform's tool config and must not be able to approve money.
+    """
+    if path.startswith("/tools/"):
+        return config.SAMADHAN_API_KEY
+    return config.OPERATOR_API_KEY or config.SAMADHAN_API_KEY
 
 
 def call(path: str, payload: dict | None = None, method: str = "POST") -> tuple[int, dict, float]:
@@ -37,7 +49,7 @@ def call(path: str, payload: dict | None = None, method: str = "POST") -> tuple[
     data = json.dumps(payload or {}).encode() if method == "POST" else None
     req = urllib.request.Request(url, data=data, method=method, headers={
         "Content-Type": "application/json",
-        "X-Samadhan-Key": config.SAMADHAN_API_KEY,
+        "X-Samadhan-Key": key_for(path),
     })
     started = time.perf_counter()
     try:
@@ -447,6 +459,24 @@ def scenario_edges() -> None:
     status, body, _ = call("/tools/merchant-context", {"phone": "+919000000001"})
     print(f"\n  [auth] no interaction_id: HTTP {status}, ok={body.get('ok')}")
     expect("works without an interaction id too", status == 200)
+
+    # The voice-agent key must NOT open the operator endpoints that approve
+    # money. That separation is the point of having two credentials.
+    if config.OPERATOR_API_KEY:
+        req = urllib.request.Request(
+            BASE + "/ops/approvals",
+            headers={**UA_HEADERS, "X-Samadhan-Key": config.SAMADHAN_API_KEY},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                code = resp.status
+        except urllib.error.HTTPError as exc:
+            code = exc.code
+        except Exception:
+            code = 0
+        print(f"\n  [auth] agent key on an operator path: HTTP {code}")
+        expect("agent key cannot reach the approval queue", code == 401,
+               f"got HTTP {code}")
 
     # Wrong shared secret must still speak, not 401, on a tool path.
     req = urllib.request.Request(

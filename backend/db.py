@@ -39,10 +39,21 @@ def open_pool() -> None:
 
     _pool = ConnectionPool(
         conninfo=config.DATABASE_URL,
+        # min == max, opened and waited for at startup. The pool growing
+        # mid-call was the cause of multi-second spikes: each new connection
+        # pays a TLS handshake through Supavisor, and that landed inside
+        # whichever tool call happened to trigger the growth.
+        #
+        # Two, not four: asking Supavisor for four at once did not complete
+        # within 30 s, so startup failed outright. A voice agent handles one
+        # call at a time, so two is enough and the second covers the
+        # dashboard's occasional approval call.
         min_size=2,
-        max_size=8,
-        timeout=10,
-        max_lifetime=1800,
+        max_size=2,
+        timeout=15,
+        # Long-lived: recycling a connection means another handshake, and we
+        # would rather keep the same four warm for the whole demo.
+        max_lifetime=7200,
         # prepare_threshold=None disables psycopg's automatic prepared
         # statements. Measured against this project, 40 mixed queries through
         # Supabase's Supavisor pooler:
@@ -57,7 +68,7 @@ def open_pool() -> None:
         name="samadhan",
     )
     _pool.open(wait=True, timeout=30)
-    log.info("db pool open (min 2, max 8)")
+    log.info("db pool open and warm (2 connections)")
 
 
 def close_pool() -> None:
