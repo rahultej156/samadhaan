@@ -336,6 +336,13 @@ def open_call_session(cur, case_id: str, interaction_id: str, caller_phone: str 
     The conflict clause never downgrades a trusted number to an untrusted one,
     and never lets an untrusted call overwrite a trusted number.
     """
+    # Trust is a claim ABOUT a number, so with no parseable number there is
+    # nothing to vouch for. Recording trusted=true anyway left sessions that
+    # advertised a verified caller id they did not have. That is what the
+    # browser test widget produces: its @User Identifier is the Sarvam
+    # account's email address, which normalise_phone correctly rejects.
+    trusted = trusted and caller_phone is not None
+
     cur.execute(
         """
         insert into call_sessions

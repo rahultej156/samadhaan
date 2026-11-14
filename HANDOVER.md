@@ -179,12 +179,18 @@ sending them if your config already does; nothing breaks.
 
 ## 5. The four demo merchants
 
-| Phone | Merchant | Scenario | What the agent should end up doing |
-|---|---|---|---|
-| `+919000000001` | Lakshmi Provision Store (te-IN) | shop closed 8 months ago, still charged ₹125/mo, ₹1,000 total | stop billing, credit note, book pickup, send proof |
-| `+919000000002` | Imran Mobile Repairs (hi-IN) | promised ₹1/mo, billed ₹125 for 7 months | promise check → ₹868 refund **raised for approval** |
-| `+919000000003` | Anjali Fashions (te-IN) | ₹14,200 settlement on hold, PAN/GST mismatch | explain plainly, list 2 documents, give a date and upload link |
-| `+919000000004` | Ravi Tea Stall (te-IN) | Soundbox silent 11 days | two troubleshooting steps, then book a technician |
+| Phone | Soundbox serial | Merchant | Scenario | What the agent should end up doing |
+|---|---|---|---|---|
+| `+919000000001` | `SB-77301` | Lakshmi Provision Store (te-IN) | shop closed 8 months ago, still charged ₹125/mo, ₹1,000 total | stop billing, credit note, book pickup, send proof |
+| `+919000000002` | `SB-81144` | Imran Mobile Repairs (hi-IN) | promised ₹1/mo, billed ₹125 for 7 months | promise check → ₹868 refund **raised for approval** |
+| `+919000000003` | `SB-64207` | Anjali Fashions (te-IN) | ₹14,200 settlement on hold, PAN/GST mismatch | explain plainly, list 2 documents, give a date and upload link |
+| `+919000000004` | `SB-50982` | Ravi Tea Stall (te-IN) | Soundbox silent 11 days | two troubleshooting steps, then book a technician |
+
+**The serial column is for testing in the browser.** There is no caller id in the
+browser widget, so the agent will ask you to read the serial off the Soundbox —
+that is the possession check doing its job, not a bug. Read out the serial for
+the merchant you are pretending to be and the call proceeds normally. Over a
+real phone call the serial is never asked, because caller id already matched.
 
 ### Calling from your own phone
 
@@ -238,7 +244,8 @@ to work.
 | 502 / connection refused on every tool | the tunnel or the backend is down — ping Syed |
 | `ok: false`, "trouble reaching your account securely" | wrong or missing `X-Samadhan-Key` |
 | `ok: false`, "could not find an account" | the caller's number is not seeded or bound — use `/admin/bind-phone` |
-| Agent asked to read a Soundbox serial | `call_started` is not registered as **on_start**, so caller id is untrusted |
+| Agent asked to read a Soundbox serial | No trusted caller id. Either you are testing in the **browser widget** (where `@User Identifier` is your Sarvam account email, not a phone number — expected, just read out the serial from the table above), or on a real call `call_started` is not registered as **on_start**. Run `check_integration.py` and it will tell you which |
+| "I could not find an account for the number you are calling from" on every call | Same cause. In the browser there is no caller id to find an account for, so the agent correctly falls back to asking for the registered number |
 | "I am having trouble reading your account" | a real backend error — tell Syed, the traceback is in the log |
 | Tool call is slow | see the latency note below. Set the tool's Max wait to **10 s**, not 30 — long enough to absorb a spike, short enough that the agent can recover and say something |
 | Same pickup booked twice | should be impossible — the database refuses it. Tell Syed if you see it |

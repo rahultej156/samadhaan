@@ -128,8 +128,20 @@ def main() -> None:
                  "not registered as on_start — caller id cannot be trusted, so "
                  "every merchant will be asked for their Soundbox serial")
 
-        if s["caller_phone_trusted"]:
+        if s["caller_phone_trusted"] and s["caller_phone"]:
             line(OK, "caller id is trusted", "the hook supplied the number")
+        elif "call_started" in names and not s["caller_phone"]:
+            sent = next((e for e in events if e["tool_name"] == "call_started"), None)
+            raw = (sent["args"] or {}).get("phone") if sent else None
+            line(BAD, "the hook sent no usable phone number",
+                 f"@User Identifier came through as {raw!r}")
+            for hint in (
+                "On the browser test widget @User Identifier is the Sarvam",
+                "account's email, not a caller id. Either call the agent's",
+                "phone number from a real handset, or answer the Soundbox",
+                "serial question.",
+            ):
+                print(f"         {hint}")
         else:
             line(BAD, "caller id NOT trusted",
                  "number arrived as a tool argument, not from the on_start hook")
