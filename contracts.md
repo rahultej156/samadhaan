@@ -68,7 +68,7 @@ These exist in Track B and duplicating them will cause divergence:
 
 | Layer | Decision | Why |
 |---|---|---|
-| LLM | **`sarvam-105b`** | `sarvam-m` is deprecated. 105b has confirmed OpenAI-style tool calling. `sarvam-105b-conversations` is voice-tuned but its tool support is undocumented — verify before relying on it |
+| LLM | **chosen by the platform** | Sarvam Voice Agents picks the model; we do not. Mainly `sarvam-105b-conversations`. This row only applies to the **browser fallback** path, where we call the API ourselves — there, use `sarvam-105b` (`sarvam-m` is deprecated; 105b has confirmed OpenAI-style tool calling) |
 | STT | **`saaras:v4`**, `mode=transcribe` or `translate` | current default, 23 languages = 22 Indian + English, matches the pitch |
 | TTS | **`bulbul:v4-flash`** | Bulbul v3 hit end-of-life on Voice Agents on 10 Nov 2026. **v4-flash covers 9 languages, not 11** — no Malayalam, no Odia. The deck says "replies by voice in 11"; say "understands 23, speaks 9 today" on stage |
 | Backend | FastAPI local + **ngrok static domain** | ~50 ms per tool call and instant hot reload beat the cloud's ~310 ms during a build day |
@@ -102,6 +102,74 @@ Do not wait. In order of preference:
 - Fallback: FastAPI Cloud, e.g. `https://probe-1bb67250.fastapicloud.dev`
 - Auth on every call: `X-Samadhan-Key: <shared secret>`, set as a masked secret
   in the Sarvam tool's Headers section.
+
+---
+
+## Changes from the Track A review (14 Nov)
+
+Rahul reviewed the contract before Track B started building. All seven points
+accepted; three with a change. Nothing here breaks a tool already configured —
+every change either makes a field optional or adds a new one.
+
+**1. Three fields move from the agent to the backend. Agreed, all three.**
+`request_date` (closure), `idempotency_key`, and `step` (device) are now
+**optional and ignored**. The backend uses its own values: today's date, a key
+derived as `<case_ref>:<action>`, and the troubleshooting step counted from
+`case_events`. Keep sending them if that is easier — nothing breaks either way.
+The principle is Rahul's and it is right: if the model can produce the value,
+the model can get it wrong.
+
+**2. M1 double payment. My example was wrong, not the data.**
+As seeded, **M1 has no promised plan at all**, so `plan_mismatch` is `false` and
+rule 4 never fires. The `get_merchant_context` example wrongly showed M1 with
+M2's promo plan; it is corrected above. Two guards exist regardless, because a
+real merchant could have both problems:
+- the overcharge calculation **excludes any month already covered by a credit
+  note**, so the same month is never both credited and refunded;
+- `one_credit_note_per_case` and `one_pending_refund_per_case` are unique
+  indexes, so a duplicate is refused by the database, not by a prompt.
+
+**3. Identity check before write actions. Agreed, with one change: the backend
+verifies, not the model.**
+`get_merchant_context` returns `verify_question_text`, e.g. *"What is the name of
+your shop?"*. The write tools then take **`verify_answer`** — what the merchant
+actually said — and the backend compares it. A bare `verified: true` would just
+be the model asserting that it checked, which is not a check.
+Unverified write → `ok: false` with a `say` asking for the shop name, so the
+call continues naturally. Gated by `REQUIRE_VERIFICATION` in the backend env, so
+it can be switched off if the live demo is running short on time.
+Stated honestly: this is a light check, not authentication. A real deployment
+uses the registered number plus an OTP.
+
+**4. Upload channel for settlement documents. Agreed.**
+`get_settlement_hold` returns `upload_url`, and `send_confirmation` includes it
+in the written proof. It points at **our own demo upload page**, not a
+fabricated `paytm.com` link — inventing a real-looking Paytm URL in a demo is
+the kind of detail a judge notices, and it would be misleading.
+
+**5. Callback after a case is resolved. Agreed.**
+`get_merchant_context` now returns `last_resolved_case_text` for the most recent
+closed case, so a merchant calling back about something already fixed hears what
+was done and when, instead of starting again. The 7-day resume window still only
+*reopens* `open` / `acting` / `awaiting_approval` cases; a resolved case is
+acknowledged, not resumed.
+
+**6. Out-of-scope requests go to handover. Agreed, no new tools.**
+Undoing a closure, rescheduling a pickup, changing an address, more than one
+shop on one number — all `handover_to_human` with the reason.
+Added for the language case: `call_started` and `get_merchant_context` return
+**`tts_supported`**. It is `false` for `ml-IN` and `or-IN`, which
+`bulbul:v4-flash` cannot speak, so the agent can transfer immediately rather
+than discovering it mid-sentence.
+
+**7. The LLM is not ours to choose. Accepted.**
+Sarvam Voice Agents picks the model. The stack table row is corrected: it now
+applies only to the browser-fallback path, where we call the API ourselves.
+
+**Confirmed from Track A:** every tool's spoken reply is just `{{say}}`. So
+wording changes on the backend need nothing from Rahul, as long as `say` is
+always present — including when `ok` is `false`. That is already the rule, and
+it is tested.
 
 ---
 
@@ -292,9 +360,9 @@ lookups and spend four network hops.
   "billed_plan": "Soundbox Rental Standard",
   "billed_monthly_amount": 125.00,
   "billed_monthly_amount_text": "₹125.00",
-  "promised_plan": "Soundbox Promo ₹1",
-  "promised_monthly_amount": 1.00,
-  "plan_mismatch": true,
+  "promised_plan": null,
+  "promised_monthly_amount": null,
+  "plan_mismatch": false,
   "months_charged_after_closure": 8,
   "amount_charged_after_closure": 1000.00,
   "amount_charged_after_closure_text": "₹1,000.00",
