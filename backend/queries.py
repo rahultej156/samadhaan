@@ -327,19 +327,35 @@ def case_by_interaction(cur, interaction_id: str) -> dict[str, Any] | None:
 
 
 def open_call_session(cur, case_id: str, interaction_id: str, caller_phone: str | None,
-                      language_code: str | None) -> dict[str, Any]:
+                      language_code: str | None, trusted: bool = False) -> dict[str, Any]:
+    """
+    `trusted` must be True ONLY from the call_started lifecycle hook, which the
+    voice platform runs without the LLM. Everywhere else the phone number came
+    in as a tool argument, so it cannot be used as a caller-id factor.
+
+    The conflict clause never downgrades a trusted number to an untrusted one,
+    and never lets an untrusted call overwrite a trusted number.
+    """
     cur.execute(
         """
         insert into call_sessions
-            (case_id, interaction_id, sequence_no, caller_phone, language_code)
+            (case_id, interaction_id, sequence_no, caller_phone,
+             caller_phone_trusted, language_code)
         values
             (%s, %s,
              (select coalesce(max(sequence_no), 0) + 1 from call_sessions where case_id = %s),
-             %s, %s)
-        on conflict (interaction_id) do update set caller_phone = excluded.caller_phone
+             %s, %s, %s)
+        on conflict (interaction_id) do update
+           set caller_phone = case
+                   when call_sessions.caller_phone_trusted and not excluded.caller_phone_trusted
+                   then call_sessions.caller_phone
+                   else coalesce(excluded.caller_phone, call_sessions.caller_phone)
+               end,
+               caller_phone_trusted =
+                   call_sessions.caller_phone_trusted or excluded.caller_phone_trusted
         returning *
         """,
-        (case_id, interaction_id, case_id, caller_phone, language_code),
+        (case_id, interaction_id, case_id, caller_phone, trusted, language_code),
     )
     session = cur.fetchone()
     cur.execute(
@@ -403,8 +419,10 @@ def case_and_session(cur, interaction_id: str) -> dict[str, Any] | None:
     cur.execute(
         """
         select c.*,
-               s.id          as session_id,
-               s.sequence_no as session_sequence_no
+               s.id                   as session_id,
+               s.sequence_no          as session_sequence_no,
+               s.caller_phone         as session_caller_phone,
+               s.caller_phone_trusted as session_caller_trusted
           from call_sessions s
           join cases c on c.id = s.case_id
          where s.interaction_id = %s

@@ -317,6 +317,25 @@ def scenario_edges() -> None:
     print("EDGE CASES — the things that break a live demo")
     print("=" * 74)
 
+    # A tool call carrying someone else's number, with no call_started hook to
+    # vouch for it. `phone` is a tool argument, so it is model-influenced; only
+    # the number the platform's on_start hook recorded counts as caller id.
+    spoof = step("spoofed caller id, no call_started hook",
+                 "/tools/merchant-context",
+                 {"phone": "+919000000001", "interaction_id": "test-spoof-1"})
+    expect("spoofed number is NOT trusted as caller id",
+           spoof.get("verified") is False,
+           f"verified_by was {spoof.get('verified_by')!r}")
+    expect("shop name withheld from the spoofer",
+           spoof.get("merchant_name") is None,
+           f"leaked {spoof.get('merchant_name')!r}")
+
+    spoof_write = step("spoofed caller tries to stop billing",
+                       "/tools/closure",
+                       {"phone": "+919000000001", "interaction_id": "test-spoof-1"})
+    expect("spoofed write refused", spoof_write.get("ok") is False,
+           f"say was {spoof_write.get('say')!r}")
+
     unknown = step("unknown caller number", "/tools/merchant-context",
                    {"phone": "+919999999999", "interaction_id": "test-unknown-1"})
     expect("returns ok:false, not a 500", unknown.get("ok") is False)
@@ -429,6 +448,11 @@ def scenario_edges() -> None:
     print(f"\n  [demo] bind-phone -> {binding.get('shop_name')}")
     expect("binding points at M1", binding.get("merchant_code") == "M1")
 
+    # A real call reaches call_started first, which is what makes the caller id
+    # trustworthy. Without that hook the bound number is just a tool argument.
+    step("call_started from the bound number", "/tools/call-started",
+         {"phone": "+919812345678", "interaction_id": "test-bound-1",
+          "language_code": "te-IN"})
     bound = step("call from the newly bound number", "/tools/merchant-context",
                  {"phone": "+919812345678", "interaction_id": "test-bound-1"})
     expect("bound number resolves to M1",

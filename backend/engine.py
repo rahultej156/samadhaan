@@ -69,7 +69,8 @@ class Ctx:
 
 
 def open_or_resume(cur, merchant: dict[str, Any] | None, interaction_id: str | None,
-                   caller_phone: str | None, language_code: str | None) -> tuple[dict, dict | None, bool]:
+                   caller_phone: str | None, language_code: str | None,
+                   trusted_caller: bool = False) -> tuple[dict, dict | None, bool]:
     """
     Find the case this call belongs to, creating or resuming as needed.
 
@@ -82,7 +83,9 @@ def open_or_resume(cur, merchant: dict[str, Any] | None, interaction_id: str | N
         row = q.case_and_session(cur, interaction_id)
         if row:
             session = {"id": row.pop("session_id"),
-                       "sequence_no": row.pop("session_sequence_no")}
+                       "sequence_no": row.pop("session_sequence_no"),
+                       "caller_phone": row.pop("session_caller_phone"),
+                       "caller_phone_trusted": row.pop("session_caller_trusted")}
             return row, session, (row.get("call_count") or 1) > 1
 
     merchant_id = merchant["id"] if merchant else None
@@ -100,7 +103,8 @@ def open_or_resume(cur, merchant: dict[str, Any] | None, interaction_id: str | N
     session = None
     if interaction_id:
         session = q.open_call_session(cur, case["id"], interaction_id, caller_phone,
-                                      language_code or case.get("language_code"))
+                                      language_code or case.get("language_code"),
+                                      trusted=trusted_caller)
         # open_call_session has already updated call_count on the row; take the
         # value from the session rather than re-reading the case, which would be
         # another 90 ms round trip on the on_start hook before the agent speaks.
@@ -127,22 +131,6 @@ def resolve(cur, body: dict[str, Any]) -> Ctx:
 
     interaction_id = body.get("interaction_id")
 
-    # Did the CARRIER tell us this number, and does it match the account?
-    # `phone` is caller id; `registered_phone` is something the caller said.
-    caller = q.normalise_phone(body.get("phone"))
-    caller_id_match = False
-    if merchant and caller:
-        if caller == merchant.get("phone"):
-            caller_id_match = True
-        else:
-            # A demo binding is a deliberate statement that this handset is
-            # this merchant's, so it counts as caller id.
-            cur.execute(
-                "select 1 from phone_bindings where phone = %s and merchant_id = %s",
-                (caller, merchant["id"]),
-            )
-            caller_id_match = cur.fetchone() is not None
-
     # A tool call can arrive before call_started (hook not registered, or the
     # browser fallback). Create the session lazily so nothing depends on order.
     if merchant is None and interaction_id:
@@ -154,7 +142,31 @@ def resolve(cur, body: dict[str, Any]) -> Ctx:
         cur, merchant, interaction_id,
         q.normalise_phone(body.get("phone")),
         body.get("language_code"),
+        trusted_caller=bool(body.get("_trusted_caller")),
     )
+
+    # The caller-id factor comes ONLY from the number the call_started hook
+    # recorded, never from this request's arguments.
+    #
+    # `phone` arrives as a tool argument, so it is model-influenced: talk the
+    # agent into putting a different number there and it would have granted
+    # full account access and writes. The lifecycle hook runs without the LLM,
+    # so what it recorded is the platform's own value.
+    caller_id_match = False
+    trusted_caller_phone = (session or {}).get("caller_phone") \
+        if (session or {}).get("caller_phone_trusted") else None
+
+    if merchant and trusted_caller_phone:
+        if trusted_caller_phone == merchant.get("phone"):
+            caller_id_match = True
+        else:
+            # A demo binding is a deliberate operator statement that this
+            # handset belongs to this merchant, so it counts as caller id.
+            cur.execute(
+                "select 1 from phone_bindings where phone = %s and merchant_id = %s",
+                (trusted_caller_phone, merchant["id"]),
+            )
+            caller_id_match = cur.fetchone() is not None
 
     # If the case was opened before we knew the merchant, attach them now.
     if merchant and case and not case.get("merchant_id"):
@@ -258,13 +270,6 @@ def verification_gate(ctx: Ctx, action: str) -> dict[str, Any] | None:
     if not config.REQUIRE_VERIFICATION:
         return None
 
-    if ctx.caller_id_match:
-        record_verified(ctx, "caller id matches the registered number")
-        return None
-
-    if already_verified(ctx):
-        return None
-
     # Fail closed without a call session. Attempts are counted against the
     # case, but a write with no session at all has nothing to audit the
     # verification against, so it does not get to change anything.
@@ -278,9 +283,18 @@ def verification_gate(ctx: Ctx, action: str) -> dict[str, Any] | None:
             ),
         }
 
+    verified, failures = verification_state(ctx)
+
+    if ctx.caller_id_match:
+        if not verified:
+            record_verified(ctx, "caller id matches the registered number")
+        return None
+
+    if verified:
+        return None
+
     # A serial is five digits, so without a limit it is guessable across
     # retries. Three tries, then a person takes over.
-    failures = failed_attempts(ctx)
     if failures >= config.VERIFY_MAX_ATTEMPTS:
         return {
             "ok": False,
@@ -354,6 +368,40 @@ def failed_attempts(ctx: Ctx) -> int:
     return ctx.cur.fetchone()["n"]
 
 
+def verification_state(ctx: Ctx) -> tuple[bool, int]:
+    """
+    (already_verified, failed_attempts) in ONE round trip.
+
+    These were two queries plus a third inside record_verified. At ~110 ms per
+    round trip to Singapore, the gate alone cost a third of a second on every
+    write before doing anything.
+    """
+    if not ctx.case_id:
+        return False, 0
+    ctx.cur.execute(
+        """
+        select
+            exists(
+                select 1 from case_events
+                 where case_id = %s and call_session_id = %s
+                   and tool_name = 'identity_verified'
+            ) as verified,
+            (select count(*) from case_events
+              where case_id = %s
+                and tool_name = 'verification_failed'
+                and at > now() - interval '1 hour'
+                and id > coalesce((
+                      select max(id) from case_events
+                       where case_id = %s and tool_name = 'identity_verified'
+                    ), 0)
+            ) as failures
+        """,
+        (ctx.case_id, ctx.session_id, ctx.case_id, ctx.case_id),
+    )
+    row = ctx.cur.fetchone()
+    return bool(row["verified"]), int(row["failures"])
+
+
 def already_verified(ctx: Ctx) -> bool:
     """
     Per CALL, not per case.
@@ -380,9 +428,12 @@ def already_verified(ctx: Ctx) -> bool:
 
 
 def record_verified(ctx: Ctx, how: str) -> None:
-    """Audited, so the dashboard can show WHY a write was allowed."""
-    if already_verified(ctx):
-        return
+    """
+    Audited, so the dashboard can show WHY a write was allowed.
+
+    The caller has already established that this call is not yet verified, so
+    there is no re-check here: that was a third round trip for nothing.
+    """
     q.log_event(ctx.cur, ctx.case_id, ctx.session_id, "identity_verified",
                 {"factor": how}, {"matched": True}, None, True, None, None,
                 actor="system")
@@ -398,7 +449,10 @@ def is_verified(ctx: Ctx) -> bool:
     """
     if not config.REQUIRE_VERIFICATION:
         return True
-    return ctx.caller_id_match or already_verified(ctx)
+    if ctx.caller_id_match:
+        return True
+    verified, _ = verification_state(ctx)
+    return verified
 
 
 # --------------------------------------------- what has already been done

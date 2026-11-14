@@ -186,6 +186,11 @@ create table call_sessions (
     interaction_id    text not null unique,            -- Sarvam call id
     sequence_no       integer not null default 1,      -- 1st call, 2nd call, ...
     caller_phone      text,
+    -- True only when caller_phone was recorded by the call_started lifecycle
+    -- hook, which the voice platform runs WITHOUT the LLM. A number arriving
+    -- as a tool argument is model-influenced and must never count as caller
+    -- id for verification.
+    caller_phone_trusted boolean not null default false,
     language_code     text,
     started_at        timestamptz not null default now(),
     ended_at          timestamptz,
