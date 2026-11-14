@@ -5,8 +5,10 @@
 -- Design rules:
 --   * case_events is append-only and is the audit log. Every tool call writes one.
 --   * Money is numeric(12,2). Never float.
---   * Dashboard reads these tables directly with the anon key (read-only RLS).
---     All writes go through FastAPI with the service-role key, which bypasses RLS.
+--   * Nothing is readable with the anon/publishable key. RLS is on with NO
+--     policies, deliberately — see the RLS section at the bottom of this file.
+--     The dashboard reads server-side with the SERVICE-ROLE key; FastAPI uses
+--     the same key, which bypasses RLS. Neither key ever reaches a browser.
 
 -- ---------------------------------------------------------------- reset
 drop view if exists case_feed cascade;
