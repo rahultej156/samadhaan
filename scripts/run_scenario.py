@@ -362,6 +362,28 @@ def scenario_edges() -> None:
            recite.get("ok") is False,
            f"say was {recite.get('say')!r}")
 
+    # These two need their own cases: failed attempts now count against the
+    # case, so running them on M1 would use up its allowance.
+    #
+    # Several serial-length numbers in one answer would be many guesses counted
+    # as one attempt, which defeats the limit. M3's real serial is in here.
+    multi = step("many candidate serials in one answer (must be refused)",
+                 "/tools/device",
+                 {"registered_phone": "9000000003",
+                  "interaction_id": "test-multi-1", "symptom": "no_sound",
+                  "verify_answer": "11111 22222 64207 33333 44444 55555"})
+    expect("multi-guess answer refused outright",
+           multi.get("technician_booked") is not True,
+           f"say was {multi.get('say')!r}")
+
+    # Honest reading with an unrelated small number alongside it still works.
+    messy = step("real serial plus an unrelated number", "/tools/closure",
+                 {"registered_phone": "9000000004",
+                  "interaction_id": "test-messy-1",
+                  "verify_answer": "it says SB 50982, shop 14"})
+    expect("honest messy answer accepted", messy.get("ok") is True,
+           f"say was {messy.get('say')!r}")
+
     right = step("correct serial unlocks the write", "/tools/closure",
                  {"registered_phone": "9000000001", "interaction_id": "test-spoken-1",
                   "verify_answer": "S B seven seven three zero one"})

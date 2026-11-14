@@ -225,16 +225,21 @@ def answer_matches(merchant_or_device: dict[str, Any], answer: str | None) -> bo
     # one long digit string that happens to contain the serial and walk
     # straight through the check.
     #
-    # Two acceptable forms, so an honest caller is not punished for how they
-    # read it aloud:
-    #   - the whole answer reduced to digits, which covers "SB-77301" and
-    #     "seven seven three zero one" alike
-    #   - any single run of digits in the answer, which covers "SB 77301,
-    #     shop 14" where the extra number would corrupt the joined form
-    # Each candidate is one guess, so this does not help enumeration; the
-    # attempt limit below is what actually stops guessing.
-    candidates = {digits(answer)} | set(re.findall(r"\d+", str(answer)))
-    return any(c and hmac.compare_digest(c, want) for c in candidates)
+    # ONE candidate per attempt, or the attempt limit is meaningless: an answer
+    # of "11111 22222 33333 ... 77301" would otherwise be hundreds of guesses
+    # counted as one, and a five-digit serial is only 100,000 possibilities.
+    #
+    # Honest readings still work:
+    #   "SB-77301"                      -> one run, 77301
+    #   "SB 77301, shop 14"             -> one serial-length run, 77301
+    #   "seven seven three zero one"    -> no runs, falls back to joined digits
+    #   "SB 7 7 3 0 1"                  -> no long runs, joined digits
+    # A caller reciting several serial-length numbers is refused outright.
+    runs = [r for r in re.findall(r"\d+", str(answer)) if len(r) >= 4]
+    if len(runs) > 1:
+        return False
+    candidate = runs[0] if runs else digits(answer)
+    return bool(candidate) and hmac.compare_digest(candidate, want)
 
 
 def verification_gate(ctx: Ctx, action: str) -> dict[str, Any] | None:
@@ -260,8 +265,21 @@ def verification_gate(ctx: Ctx, action: str) -> dict[str, Any] | None:
     if already_verified(ctx):
         return None
 
+    # Fail closed without a call session. Attempts are counted against the
+    # case, but a write with no session at all has nothing to audit the
+    # verification against, so it does not get to change anything.
+    if not ctx.session_id:
+        return {
+            "ok": False,
+            "reason": "no call session to verify against",
+            "say": (
+                "I cannot make that change on this connection. Let me connect "
+                "you to a colleague who can help."
+            ),
+        }
+
     # A serial is five digits, so without a limit it is guessable across
-    # retries. Three tries on this call, then a person takes over.
+    # retries. Three tries, then a person takes over.
     failures = failed_attempts(ctx)
     if failures >= config.VERIFY_MAX_ATTEMPTS:
         return {
@@ -308,16 +326,30 @@ def verification_gate(ctx: Ctx, action: str) -> dict[str, Any] | None:
 
 
 def failed_attempts(ctx: Ctx) -> int:
-    """Failed verification answers on THIS call."""
-    if not ctx.session_id:
+    """
+    Failed verification answers on this CASE in the last hour, counted since
+    the most recent successful verification.
+
+    Deliberately not per call session: a caller who simply sent a new
+    interaction id would otherwise reset the counter and guess forever. Counting
+    since the last success means an honest merchant who verified earlier is not
+    punished for someone else's failed guesses.
+    """
+    if not ctx.case_id:
         return 0
     ctx.cur.execute(
         """
-        select count(*) as n from case_events
-         where case_id = %s and call_session_id = %s
+        select count(*) as n
+          from case_events
+         where case_id = %s
            and tool_name = 'verification_failed'
+           and at > now() - interval '1 hour'
+           and id > coalesce((
+                 select max(id) from case_events
+                  where case_id = %s and tool_name = 'identity_verified'
+               ), 0)
         """,
-        (ctx.case_id, ctx.session_id),
+        (ctx.case_id, ctx.case_id),
     )
     return ctx.cur.fetchone()["n"]
 
