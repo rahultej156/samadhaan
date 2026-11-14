@@ -373,8 +373,31 @@ from cases c
 left join merchants m on m.id = c.merchant_id;
 
 -- --------------------------------------------------------------------- RLS
--- Dashboard uses the anon key and may only READ. FastAPI uses the service-role
--- key, which bypasses RLS entirely, so there are deliberately NO write policies.
+-- RLS is ON for every table and there are deliberately NO POLICIES AT ALL.
+-- That means: nothing is readable or writable with the anon key. Full stop.
+--
+-- Why not grant anon SELECT so the dashboard can read directly?
+-- Because the anon key is shipped to the browser in the JS bundle. It is a
+-- public credential. `for select to anon using (true)` would publish every
+-- merchant's phone number and address, every call transcript, and every
+-- handover summary to anyone who loads the dashboard or guesses the project
+-- URL. These tables hold merchant PII and the substance of support calls.
+--
+-- Access model instead:
+--   * FastAPI uses the SERVICE-ROLE key. It bypasses RLS. Server-side only,
+--     in backend/.env, never in a client bundle.
+--   * The dashboard is Next.js and reads Supabase from the SERVER (server
+--     components / route handlers) with the service-role key, so no key and
+--     no data reaches the browser except the rows we chose to render.
+--   * Cost of this choice: no client-side Realtime subscription, because that
+--     would need a browser-side key. The dashboard revalidates every 3s
+--     instead. Acceptable; a 3s delay is invisible next to a phone call.
+--
+-- If we later want true Realtime, the correct fix is Supabase Auth with an
+-- operator role and policies like:
+--     create policy staff_read_cases on cases for select to authenticated
+--         using ((auth.jwt() ->> 'app_role') = 'operator');
+-- That is the real answer, not a blanket anon grant.
 alter table merchants          enable row level security;
 alter table devices            enable row level security;
 alter table plans              enable row level security;
@@ -392,24 +415,22 @@ alter table proofs             enable row level security;
 alter table phone_bindings     enable row level security;
 alter table tool_idempotency   enable row level security;
 
--- Written out explicitly rather than generated in a DO block: PL/pgSQL bodies
--- are opaque to the SQL parser, so a loop here could not be validated before
--- running it. Thirteen boring lines that are checked are worth more than four
--- clever ones that are not.
-create policy anon_read_merchants          on merchants          for select to anon, authenticated using (true);
-create policy anon_read_devices            on devices            for select to anon, authenticated using (true);
-create policy anon_read_plans              on plans              for select to anon, authenticated using (true);
-create policy anon_read_invoices           on invoices           for select to anon, authenticated using (true);
-create policy anon_read_settlements        on settlements        for select to anon, authenticated using (true);
-create policy anon_read_cases              on cases              for select to anon, authenticated using (true);
-create policy anon_read_call_sessions      on call_sessions      for select to anon, authenticated using (true);
-create policy anon_read_case_events        on case_events        for select to anon, authenticated using (true);
-create policy anon_read_conversation_turns on conversation_turns for select to anon, authenticated using (true);
-create policy anon_read_credit_notes       on credit_notes       for select to anon, authenticated using (true);
-create policy anon_read_service_tickets    on service_tickets    for select to anon, authenticated using (true);
-create policy anon_read_refund_requests    on refund_requests    for select to anon, authenticated using (true);
-create policy anon_read_handovers          on handovers          for select to anon, authenticated using (true);
-create policy anon_read_proofs             on proofs             for select to anon, authenticated using (true);
+-- No policies are created, on purpose. See the note above.
+--
+-- Belt and braces: revoke the table-level grants Supabase hands the public
+-- roles by default, so even a future accidental policy cannot expose these
+-- tables, and PostgREST stops advertising them to anon entirely.
+revoke all on all tables in schema public from anon;
+revoke all on all tables in schema public from authenticated;
+revoke all on all sequences in schema public from anon;
+revoke all on all sequences in schema public from authenticated;
 
--- phone_bindings and tool_idempotency get NO policies at all: internal only,
--- so the anon key cannot read them even though RLS is on.
+-- Verify after running this file. Both queries should return ZERO rows.
+--
+--   select tablename, policyname from pg_policies where schemaname = 'public';
+--
+--   select table_name, privilege_type
+--     from information_schema.role_table_grants
+--    where grantee in ('anon', 'authenticated') and table_schema = 'public';
+--
+-- If either returns rows, the anon key can read something it should not.
