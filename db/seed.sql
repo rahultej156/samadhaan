@@ -47,7 +47,10 @@ d as (
         (merchant_id, serial, status, activated_on, last_heartbeat_at)
     select m.id, 'SB-77301', 'active',
            (current_date - interval '16 months')::date,
-           now() - interval '243 days'
+           -- Last payment taken the day before the shop closed. The closure
+           -- tool credits charges after the later of this and the month the
+           -- merchant states, so this keeps M1's credit at the pitch's ₹1,000.
+           now() - interval '8 months' - interval '6 days'
     from m
     returning id, merchant_id
 ),

@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -438,12 +439,16 @@ def merchant_context(ctx: engine.Ctx) -> dict[str, Any]:
 
     # First call on a fresh case: state the situation we can see.
     if m["shop_status"] == "closed" and m["months_charged_after_closure"]:
+        # No closure date is asserted here: the merchant states it, and the
+        # closure tool checks it against the device. Only what the device
+        # itself shows is said.
+        idle = m["device_last_seen_days"]
         payload["say"] = (
             f"I can see your shop {m['shop_name']} in {m['city']}. Your "
-            f"{m['device_type']} is still active and you have been charged "
-            f"{sp.rupees_spoken(billed)} a month, "
-            f"{sp.rupees_spoken(m['amount_charged_after_closure'])} in total, "
-            f"since your shop closed in {sp.month_spoken(m['shop_closed_on'])}."
+            f"{m['device_type']} is still active and billed "
+            f"{sp.rupees_spoken(billed)} a month"
+            + (f", but it has not been used for {sp.days_spoken(idle)}" if idle else "")
+            + "."
         )
     elif mismatch:
         payload["say"] = (
@@ -567,6 +572,45 @@ def promise_check(ctx: engine.Ctx) -> dict[str, Any]:
 # --------------------------------------------------- 4. stop_billing_and_pickup
 
 
+_MONTHS = {m: i for i, m in enumerate(
+    ["january", "february", "march", "april", "may", "june", "july", "august",
+     "september", "october", "november", "december"], start=1)}
+
+
+def parse_closed_since(raw: Any, today: date) -> date | None:
+    """
+    The month the merchant says the shop closed, as the first day of that month.
+
+    The agent passes what the merchant said, e.g. "March 2026", "Mar 2026",
+    "2026-03" or "03/2026". A month with no year means the most recent such
+    month, never a future one. Returns None when no month can be read, so the
+    closure tool asks instead of guessing.
+    """
+    text = str(raw or "").strip().lower()
+    if not text:
+        return None
+    month = year = None
+    m = re.search(r"\b(20\d{2})[-/.](\d{1,2})\b", text)          # 2026-03
+    if m:
+        year, month = int(m.group(1)), int(m.group(2))
+    else:
+        m = re.search(r"\b(\d{1,2})[-/.](20\d{2})\b", text)      # 03/2026
+        if m:
+            month, year = int(m.group(1)), int(m.group(2))
+    if month is None:
+        for name, num in _MONTHS.items():
+            if re.search(rf"\b{name[:3]}[a-z]*\b", text):
+                month = num
+                break
+        y = re.search(r"\b(20\d{2})\b", text)
+        year = int(y.group(1)) if y else None
+    if not month or not 1 <= month <= 12:
+        return None
+    if year is None:
+        year = today.year if month <= today.month else today.year - 1
+    return date(year, month, 1)
+
+
 @router.post("/closure")
 @_handler("stop_billing_and_pickup")
 def closure(ctx: engine.Ctx) -> dict[str, Any]:
@@ -588,22 +632,51 @@ def closure(ctx: engine.Ctx) -> dict[str, Any]:
         return fail("I cannot see a device on your account to stop billing for. "
                     "Let me connect you to a colleague.", "no device")
 
-    # The backend owns the date. Rahul's point 1: a date the model produces is
-    # a date the model can get wrong.
+    # Closure credit policy.
+    #  1. The MERCHANT says when the shop closed (month and year). We never
+    #     assume a closure date from our own records or let the model make one.
+    #  2. Billing stops from today, the day of the request. It is never
+    #     stopped retroactively; past charges are covered by a credit note.
+    #  3. The credit note covers charges after the LATER of the stated closure
+    #     month and the Soundbox's last activity. A box still taking payments
+    #     after the stated date was still in use, so those months are not
+    #     credited. A stated month in the future is refused; one before the
+    #     account opened is treated as the opening date.
     today = date.today()
-    closed_on = ctx.merchant.get("shop_closed_on")
-    credit_from = closed_on or today
+    stated = parse_closed_since(ctx.args.get("closed_since"), today)
+    if stated is None:
+        return fail(
+            "Before I stop the billing, please tell me in which month and year "
+            "your shop closed, or you stopped using the Soundbox.",
+            "closure month needed",
+        )
+    if stated > today:
+        return fail(
+            "That month has not come yet. Please tell me the month and year your "
+            "shop actually closed.",
+            "closure month in the future",
+        )
+    onboarded = ctx.merchant.get("onboarded_on")
+    if onboarded and stated < onboarded:
+        stated = onboarded
+
+    last_used = device["last_heartbeat_at"].date() if device.get("last_heartbeat_at") else None
+    used_after_stated = bool(last_used and last_used >= stated)
+    # Charges strictly after this date are credited.
+    credit_after = last_used if used_after_stated else stated - timedelta(days=1)
 
     q.stop_billing(cur, device["id"], today)
+    q.record_shop_closed(cur, ctx.merchant["id"], stated)
 
     note = q.existing_credit_note(cur, ctx.case_id)
     if note is None:
-        credited = q.credit_post_closure_invoices(cur, ctx.merchant["id"], credit_from)
+        credited = q.credit_post_closure_invoices(cur, ctx.merchant["id"], credit_after)
         if credited["count"]:
             note = q.create_credit_note(
                 cur, ctx.case_id, ctx.merchant["id"], credited["total"],
                 credited["first"], credited["last"],
-                "charges raised after the shop closed",
+                f"charges after the shop closed ({stated:%B %Y}, as stated by the merchant)"
+                + (f"; Soundbox last used {last_used:%d %B %Y}" if used_after_stated else ""),
             )
 
     ticket = q.existing_ticket(cur, ctx.case_id, "pickup")
@@ -621,6 +694,8 @@ def closure(ctx: engine.Ctx) -> dict[str, Any]:
         "ok": True,
         "ref": ctx.case_ref,
         "billing_stopped_from": today,
+        "closed_since": stated,
+        "soundbox_last_used": last_used,
         "device_status": "pickup_scheduled",
         "pickup_ref": ticket["ticket_ref"],
         "pickup_date": ticket["scheduled_date"],
@@ -635,19 +710,25 @@ def closure(ctx: engine.Ctx) -> dict[str, Any]:
             "credit_note_period": sp.date_range_text(note["period_start"],
                                                      note["period_end"]),
         })
+        if used_after_stated:
+            basis = (f"Your {device['device_type']} was last used on "
+                     f"{sp.date_spoken(last_used)} {last_used.year}, so")
+        else:
+            basis = (f"You told me the shop closed in {sp.month_spoken(stated)} "
+                     f"{stated.year}, so")
         payload["say"] = (
-            f"I have stopped the billing from today. A credit note of "
-            f"{sp.rupees_spoken(note['amount'])} has been raised for the period "
-            f"since your shop closed in {sp.month_spoken(closed_on)}. Pickup of "
-            f"the {device['device_type']} is booked for "
+            f"I have stopped the billing from today. {basis} a credit note of "
+            f"{sp.rupees_spoken(note['amount'])} has been raised for the charges "
+            f"after that. Pickup of the {device['device_type']} is booked for "
             f"{sp.date_spoken(ticket['scheduled_date'])}, and I will send you a "
             f"written confirmation with these details."
         )
     else:
         payload["say"] = (
-            f"I have stopped the billing from today and booked pickup of the "
-            f"{device['device_type']} for "
-            f"{sp.date_spoken(ticket['scheduled_date'])}. I will send you a "
+            f"I have stopped the billing from today. There were no charges after "
+            f"{sp.month_spoken(stated)} {stated.year}, so there is nothing to "
+            f"credit. Pickup of the {device['device_type']} is booked for "
+            f"{sp.date_spoken(ticket['scheduled_date'])}, and I will send you a "
             f"written confirmation with these details."
         )
 

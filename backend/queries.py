@@ -564,6 +564,14 @@ def stop_billing(cur, device_id: str, from_date: date) -> None:
     )
 
 
+def record_shop_closed(cur, merchant_id: str, closed_on: date) -> None:
+    """Store the closure month the merchant stated on the call."""
+    cur.execute(
+        "update merchants set shop_status = 'closed', shop_closed_on = %s where id = %s",
+        (closed_on, merchant_id),
+    )
+
+
 def credit_post_closure_invoices(cur, merchant_id: str, after: date) -> dict[str, Any]:
     """Mark the post-closure charges as credited and return the total."""
     cur.execute(
