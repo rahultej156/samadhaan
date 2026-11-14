@@ -17,10 +17,25 @@ desktop.ini
 # Python
 __pycache__/
 *.pyc
+*.pyo
 .venv/
 venv/
+.pytest_cache/
 
-# Node
+# Node / Next
 node_modules/
 dist/
 build/
+.next/
+out/
+.vercel/
+
+# FastAPI Cloud (app id is local; the deploy target is per-machine)
+.fastapicloud/
+
+# Local runtime noise
+*.log
+
+# Throwaway: deploy probe used to measure FastAPI Cloud viability.
+# Not part of the build; kept local.
+probe/

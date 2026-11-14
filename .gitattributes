@@ -1,0 +1,13 @@
+# Normalise line endings so Windows and mac/linux do not fight over them.
+* text=auto eol=lf
+
+*.md   text eol=lf
+*.sql  text eol=lf
+*.py   text eol=lf
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.json text eol=lf
+
+*.pptx binary
+*.png  binary
+*.jpg  binary
