@@ -40,6 +40,15 @@ TECHNICIAN_SLA_DAYS = _int("TECHNICIAN_SLA_DAYS", 3)
 
 DEBUG = _bool("SAMADHAN_DEBUG", True)
 
+# Ask the merchant to confirm their shop name before any write action.
+# The BACKEND compares the answer; a flag from the model is not a check.
+# Set to 0 if the live demo is running short on time.
+REQUIRE_VERIFICATION = _bool("REQUIRE_VERIFICATION", True)
+
+# Used to build the document-upload link in the settlement-hold proof.
+# Our own page on purpose, never a fabricated paytm.com URL.
+DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:3000").strip()
+
 # Refund decisions are promised "by tomorrow" on the call.
 REFUND_DECISION_SLA_DAYS = _int("REFUND_DECISION_SLA_DAYS", 1)
 
