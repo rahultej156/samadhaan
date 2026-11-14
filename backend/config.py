@@ -3,10 +3,43 @@
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
-
 BACKEND_DIR = Path(__file__).resolve().parent
-load_dotenv(BACKEND_DIR / ".env")
+ENV_FILE = BACKEND_DIR / ".env"
+
+
+def _load_env(path: Path) -> None:
+    """
+    Read backend/.env into os.environ.
+
+    Uses python-dotenv when it is importable, and falls back to parsing the
+    file directly when it is not. The fallback matters: on demo day a command
+    gets typed with the system `py` instead of the venv, and
+    `ModuleNotFoundError: dotenv` is a terrible way to lose two minutes.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        pass
+    else:
+        load_dotenv(path)
+        return
+
+    if not path.exists():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip()
+        # Strip one layer of matching quotes, as dotenv does.
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        # Never clobber a variable already set in the real environment.
+        os.environ.setdefault(key, value)
+
+
+_load_env(ENV_FILE)
 
 
 def _int(name: str, default: int) -> int:

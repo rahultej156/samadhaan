@@ -30,6 +30,10 @@ import config  # noqa: E402
 BASE = "http://127.0.0.1:8000"
 UA_HEADERS = {"Content-Type": "application/json"}
 FAILURES: list[str] = []
+# When true, M2 stops before approving, so a real refund is left in the queue
+# for a human to click in the dashboard. That click is the demo's whole safety
+# claim, so it should be exercised by a person at least once before judging.
+LEAVE_PENDING = False
 LATENCIES: list[tuple[str, float]] = []
 
 
@@ -236,6 +240,11 @@ def scenario_m2() -> None:
     print(f"\n  [ops ] approval queue: {queue.get('count')} waiting")
     expect("refund is in the human queue",
            any(a["request_ref"] == ref for a in queue.get("approvals", [])))
+
+    if LEAVE_PENDING:
+        print(f"\n  LEAVING {ref} PENDING so you can approve it in the dashboard.")
+        print(f"  Open http://127.0.0.1:3000 and click Approve on {ref}.")
+        return
 
     status, decided, _ = call(f"/ops/approvals/{ref}/approve",
                               {"decided_by": "test operator"})
@@ -515,13 +524,17 @@ def scenario_edges() -> None:
 
 
 def main() -> None:
-    global BASE
+    global BASE, LEAVE_PENDING
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", default=BASE)
     parser.add_argument("--only", default="all",
                         choices=["all", "m1", "m2", "m3", "m4", "edges"])
+    parser.add_argument("--leave-pending", action="store_true",
+                        help="stop M2 before approving, so a real refund waits "
+                             "in the dashboard for a human to click")
     args = parser.parse_args()
     BASE = args.base
+    LEAVE_PENDING = args.leave_pending
 
     status, health, _ = call("/health", method="GET")
     if status != 200:
