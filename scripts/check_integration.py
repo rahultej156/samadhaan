@@ -56,6 +56,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--case", help="case reference, e.g. SMD-1042")
     ap.add_argument("--calls", type=int, default=1, help="how many recent calls")
+    ap.add_argument("--transcript", action="store_true",
+                    help="print the stored conversation, turn by turn")
     args = ap.parse_args()
 
     conn = psycopg.connect(config.DATABASE_URL, autocommit=True,
@@ -183,6 +185,32 @@ def main() -> None:
             line(MEH, "call ended mid-action",
                  "the on_end hook sent the confirmation to repair it")
 
+        # The transcript is the one thing only Sarvam knows, so its absence is
+        # a wiring fact: call_ended fired but carried no interaction_transcript.
+        cur.execute(
+            """
+            select count(*) as n,
+                   count(*) filter (where text_original is distinct from text_english)
+                       as native
+              from conversation_turns where call_session_id = %s
+            """,
+            (s["id"],),
+        )
+        t = cur.fetchone()
+        stored = s["turn_count"] or 0
+        if t["n"]:
+            detail = f"{t['n']} turn" + ("s" if t["n"] != 1 else "")
+            if t["native"]:
+                detail += f", {t['native']} with native script"
+            if stored != t["n"]:
+                detail += f"  (turn_count says {stored} — mismatch)"
+            line(OK, "transcript saved", detail)
+        elif s["ended_at"]:
+            line(BAD, "no transcript saved",
+                 "call_ended fired without an interaction_transcript in the body")
+        else:
+            line(MEH, "no transcript yet", "the call has not ended")
+
         unexpected = sorted(set(names) - KNOWN - {None})
         if unexpected:
             line(BAD, "unexpected tool names", ", ".join(unexpected))
@@ -201,6 +229,26 @@ def main() -> None:
             print(f"  {mark} {e['at']:%H:%M:%S}  {lat}  {e['tool_name']}{who}")
             if e["say"]:
                 print(f"            SAID: {e['say']}")
+
+        # --------------------------------------------------------- transcript
+        if args.transcript:
+            cur.execute(
+                """
+                select role, text_original, text_english
+                  from conversation_turns where call_session_id = %s order by id
+                """,
+                (s["id"],),
+            )
+            turns = cur.fetchall()
+            if turns:
+                print()
+                print("THE CONVERSATION")
+                for t in turns:
+                    who = "merchant" if t["role"] == "merchant" else "Samadhan"
+                    print(f"  {who:>9}: {t['text_english'] or t['text_original']}")
+                    # Only worth a second line when the two actually differ.
+                    if t["text_original"] and t["text_original"] != t["text_english"]:
+                        print(f"             ({t['text_original']})")
 
         # ------------------------------------------------------------ latency
         lats = [e["latency_ms"] for e in events if e["latency_ms"]]
