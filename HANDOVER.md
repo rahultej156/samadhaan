@@ -13,7 +13,7 @@ median 324 ms.
 **Base URL**
 
 ```
-https://holders-merry-enb-jessica.trycloudflare.com
+https://<your-tunnel>.trycloudflare.com
 ```
 
 **Auth header, on every tool**
@@ -33,7 +33,7 @@ it; it is the dashboard's.
 Check it is alive before you debug anything else:
 
 ```bash
-curl -X POST https://holders-merry-enb-jessica.trycloudflare.com/tools/echo \
+curl -X POST https://<your-tunnel>.trycloudflare.com/tools/echo \
   -H "Content-Type: application/json" -H "X-Samadhan-Key: <key>" \
   -d '{"ping":"hello"}'
 ```
@@ -197,7 +197,7 @@ real phone call the serial is never asked, because caller id already matched.
 Your real number is not in the seed data, so bind it once:
 
 ```bash
-curl -X POST https://holders-merry-enb-jessica.trycloudflare.com/admin/bind-phone \
+curl -X POST https://<your-tunnel>.trycloudflare.com/admin/bind-phone \
   -H "Content-Type: application/json" -H "X-Samadhan-Key: <OPERATOR key, ask Syed>" \
   -d '{"phone":"+91XXXXXXXXXX","merchant_code":"M1"}'
 ```
