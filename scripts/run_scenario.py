@@ -528,13 +528,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", default=BASE)
     parser.add_argument("--only", default="all",
-                        choices=["all", "m1", "m2", "m3", "m4", "edges"])
+                        choices=["all", "demo", "m1", "m2", "m3", "m4", "edges"])
     parser.add_argument("--leave-pending", action="store_true",
                         help="stop M2 before approving, so a real refund waits "
                              "in the dashboard for a human to click")
     args = parser.parse_args()
     BASE = args.base
-    LEAVE_PENDING = args.leave_pending
+    LEAVE_PENDING = args.leave_pending or args.only == "demo"
 
     status, health, _ = call("/health", method="GET")
     if status != 200:
@@ -548,8 +548,16 @@ def main() -> None:
     runners = {"m1": scenario_m1, "m2": scenario_m2, "m3": scenario_m3,
                "m4": scenario_m4, "edges": scenario_edges}
     for name, fn in runners.items():
-        if args.only in ("all", name):
+        if args.only in ("all", name) or (args.only == "demo" and name != "edges"):
             fn()
+
+    if args.only == "demo":
+        print("\n" + "=" * 74)
+        print("DASHBOARD IS READY FOR THE DEMO")
+        print("=" * 74)
+        print("  Four cases, one per scenario, and a real refund waiting for")
+        print("  you to approve. No edge-case clutter on screen.")
+        print("  Open http://127.0.0.1:3000")
 
     print("\n" + "=" * 74)
     print("LATENCY (tool budget is 2000 ms)")
