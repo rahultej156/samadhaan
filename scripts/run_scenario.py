@@ -336,6 +336,27 @@ def scenario_edges() -> None:
     expect("spoofed write refused", spoof_write.get("ok") is False,
            f"say was {spoof_write.get('say')!r}")
 
+    # Trust must not be settable from the request. If the internal flag leaks
+    # into the body, claiming it is all an attacker needs.
+    claim = step("caller CLAIMS to be trusted in the request body",
+                 "/tools/merchant-context",
+                 {"phone": "+919000000001", "interaction_id": "test-claim-1",
+                  "_trusted_caller": True, "caller_phone_trusted": True,
+                  "verified": True})
+    expect("a self-declared trust flag is ignored",
+           claim.get("verified") is False,
+           f"verified_by was {claim.get('verified_by')!r}")
+    expect("still withholds the shop name",
+           claim.get("merchant_name") is None,
+           f"leaked {claim.get('merchant_name')!r}")
+
+    claim_write = step("self-declared trusted caller tries to write",
+                       "/tools/closure",
+                       {"phone": "+919000000001", "interaction_id": "test-claim-1",
+                        "_trusted_caller": True})
+    expect("self-declared write refused", claim_write.get("ok") is False,
+           f"say was {claim_write.get('say')!r}")
+
     unknown = step("unknown caller number", "/tools/merchant-context",
                    {"phone": "+919999999999", "interaction_id": "test-unknown-1"})
     expect("returns ok:false, not a 500", unknown.get("ok") is False)

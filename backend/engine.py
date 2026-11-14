@@ -113,12 +113,22 @@ def open_or_resume(cur, merchant: dict[str, Any] | None, interaction_id: str | N
     return case, session, resumed
 
 
-def resolve(cur, body: dict[str, Any]) -> Ctx:
+def resolve(cur, body: dict[str, Any], *, trusted_caller: bool = False) -> Ctx:
     """
     Build a Ctx from whatever the agent sent. Tolerant on purpose: Sarvam may
     send the caller's phone, a spoken registered number, a merchant_id from an
     earlier tool call, or only an interaction id.
+
+    `trusted_caller` is KEYWORD-ONLY and comes from the call site, never from
+    the request. An earlier version passed it inside `body`, which meant anyone
+    could POST {"_trusted_caller": true} to any tool endpoint and be believed —
+    reopening the exact hole it was added to close. Trust cannot travel in the
+    same channel as the data it is meant to vouch for.
     """
+    # Underscore-prefixed keys are internal by convention, so a request is not
+    # allowed to supply any.
+    body = {k: v for k, v in body.items() if not str(k).startswith("_")}
+
     merchant = None
     if body.get("merchant_id"):
         merchant = q.find_merchant(cur, merchant_id=body["merchant_id"])
@@ -142,7 +152,7 @@ def resolve(cur, body: dict[str, Any]) -> Ctx:
         cur, merchant, interaction_id,
         q.normalise_phone(body.get("phone")),
         body.get("language_code"),
-        trusted_caller=bool(body.get("_trusted_caller")),
+        trusted_caller=trusted_caller,
     )
 
     # The caller-id factor comes ONLY from the number the call_started hook

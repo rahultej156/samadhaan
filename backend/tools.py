@@ -133,8 +133,9 @@ async def call_started(request: Request) -> dict[str, Any]:
         with tx() as cur:
             # This hook is run by the platform WITHOUT the LLM, so the number
             # it carries is the carrier's, not something the model composed.
-            # It is the only place a caller id becomes trusted.
-            ctx = engine.resolve(cur, {**body, "_trusted_caller": True})
+            # This is the ONLY call site that passes trusted_caller=True, and
+            # it is a keyword argument precisely so no request can set it.
+            ctx = engine.resolve(cur, body, trusted_caller=True)
             lang = body.get("language_code") or (
                 ctx.merchant["language_code"] if ctx.merchant else None)
             payload = {
